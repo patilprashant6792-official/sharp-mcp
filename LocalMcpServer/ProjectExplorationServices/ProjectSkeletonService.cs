@@ -7,26 +7,41 @@ using System.Reflection;
 using System.Reflection.Metadata;
 using System.Text;
 using System.Text.RegularExpressions;
+using static OllamaSharp.OllamaApiClient;
 
 namespace MCP.Core.Services;
 
+public class ProjectMappingsConfiguration
+{
+    public const string SectionName = "ProjectMappings";
+
+    public Dictionary<string, ProjectInfo> Projects { get; set; } = new();
+}
 public class ProjectSkeletonService : IProjectSkeletonService
 {
-    private readonly Dictionary<string, ProjectInfo> _projectMappings;
 
     private static readonly HashSet<string> ExcludedDirectories = new(StringComparer.OrdinalIgnoreCase)
     {
         "bin", "obj", ".vs", ".git", "node_modules", "packages", ".idea", ".vscode", "TestResults"
     };
 
-    public ProjectSkeletonService()
+    private readonly Dictionary<string, ProjectInfo> _projectMappings;
+
+    public ProjectSkeletonService(IConfiguration configuration)
+    
     {
-        _projectMappings = new Dictionary<string, ProjectInfo>
+        var mappingsConfig = configuration
+    .GetSection(ProjectMappingsConfiguration.SectionName)
+    .Get<ProjectMappingsConfiguration>();
+
+        if (mappingsConfig?.Projects == null || mappingsConfig.Projects.Count == 0)
         {
-            { "LocalMcpServer", new ProjectInfo { Path = @"C:\Users\Aumni\source\repos\LocalMcpServer", Description = "prashant's local mcp server" } },
-            { "RisingTideTradeCapture", new ProjectInfo { Path = @"C:\Users\Aumni\source\repos\RisingTideTradeCaptureMCP", Description = "Trades API" } },
-            { "RisingTideAPI", new ProjectInfo { Path = @"C:\Users\Aumni\source\repos\RisingTideAPI", Description = "Main API" } },
-        };
+            throw new InvalidOperationException(
+                $"No project mappings found in configuration section '{ProjectMappingsConfiguration.SectionName}'. " +
+                "Please configure at least one project in appsettings.json");
+        }
+
+        _projectMappings = mappingsConfig.Projects;
     }
 
     public ProjectSkeletonService(Dictionary<string, ProjectInfo> projectMappings)
