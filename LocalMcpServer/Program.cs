@@ -30,6 +30,9 @@ builder.Services.AddSingleton<IMethodFormatterService, MethodFormatterService>()
 
 builder.Services.AddSingleton<IMethodCallGraphService, MethodCallGraphService>();
 
+builder.Services.AddSingleton<ICodeSearchService, CodeSearchService>();
+builder.Services.AddSingleton<ICodeSearchFormatterService, CodeSearchFormatterService>();
+
 builder.Services.AddSingleton<INuGetPackageLoader, NuGetPackageLoader>();
 builder.Services.AddSingleton<INuGetPackageExplorer>(sp =>
 {

@@ -288,7 +288,7 @@ public class MethodFormatterService : IMethodFormatterService
         // INCOMING CALLS (CalledBy)
         if (graph.CalledBy.Count == 0)
         {
-            md.AppendLine("**Called By:** None (potential dead code)");
+            md.AppendLine("**Called By:** None (no C# callers detected - may be external entry point, test method, or unused code)");
         }
         else
         {

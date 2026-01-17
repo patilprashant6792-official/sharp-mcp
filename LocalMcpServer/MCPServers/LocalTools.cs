@@ -18,6 +18,8 @@ public class LocalTools
     private readonly INuGetPackageExplorer _packageExplorer;
     private readonly IMethodFormatterService _methodFormatter; // ✨ NEW
     private readonly IMethodCallGraphService _callGraphService;
+    private readonly ICodeSearchService _codeSearchService;
+    private readonly ICodeSearchFormatterService _codeSearchFormatter;
     public LocalTools(
         INuGetSearchService nugetService,
         IProjectSkeletonService projectSkeletonService,
@@ -25,7 +27,9 @@ public class LocalTools
         ITomlSerializerService tomlSerializerService,
         INuGetPackageExplorer packageExplorer,
         IMethodFormatterService methodFormatter,
-        IMethodCallGraphService callGraphService) // ✨ NEW
+        IMethodCallGraphService callGraphService,
+    ICodeSearchService codeSearchService,
+    ICodeSearchFormatterService codeSearchFormatter)
     {
         _nugetService = nugetService;
         _projectSkeletonService = projectSkeletonService;
@@ -34,6 +38,8 @@ public class LocalTools
         _packageExplorer = packageExplorer;
         _methodFormatter = methodFormatter; // ✨ NEW
         _callGraphService = callGraphService;
+        _codeSearchService = codeSearchService ?? throw new ArgumentNullException(nameof(codeSearchService));
+        _codeSearchFormatter = codeSearchFormatter ?? throw new ArgumentNullException(nameof(codeSearchFormatter));
     }
 
 
@@ -428,7 +434,56 @@ public class LocalTools
             return _tomlSerializer.Serialize(errorResult);
         }
     }
+
+    [McpServerTool]
+    [Description("Global code search across project - finds classes, methods, properties, fields, interfaces by name or keyword. " +
+    "Returns ranked results with file locations and member types. Use when you don't know where code lives. " +
+    "Example: search_code_globally('Redis') → finds all Redis-related code. " +
+    "Supports filtering by member type (Class, Method, Property, Field, Interface, All).")]
+    public async Task<string> SearchCodeGlobally(
+    [Description("Required: search query (class name, method name, keyword)")]
+    string query,
+
+    [Description("Required: project name (e.g., 'LocalMcpServer', 'RisingTideAPI')")]
+    string projectName,
+
+    [Description("Optional: filter by member type (All, Class, Interface, Method, Property, Field). Default: All")]
+    string memberType = "All",
+
+    [Description("Optional: case sensitive search. Default: false")]
+    bool caseSensitive = false,
+
+    [Description("Optional: maximum results to return (default: 20, max: 100)")]
+    int topK = 20)
+    {
+        try
+        {
+            if (!Enum.TryParse<CodeMemberType>(memberType, ignoreCase: true, out var parsedMemberType))
+                throw new ArgumentException($"Invalid member type '{memberType}'. Valid values: All, Class, Interface, Method, Property, Field");
+
+            if (topK < 1 || topK > 100)
+                throw new ArgumentException("topK must be between 1 and 100");
+
+            var request = new CodeSearchRequest
+            {
+                ProjectName = projectName,
+                Query = query,
+                MemberType = parsedMemberType,
+                CaseSensitive = caseSensitive,
+                TopK = topK
+            };
+
+            var response = await _codeSearchService.SearchGloballyAsync(request);
+            return _codeSearchFormatter.FormatSearchResults(response);
+        }
+        catch (Exception ex)
+        {
+            return $"# ❌ Search Failed\n\n**Error:** {ex.Message}\n\n**Type:** {ex.GetType().Name}";
+        }
+    }
+
 }
+
 
 public class DateTimeResponse
 {
