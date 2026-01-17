@@ -25,8 +25,10 @@ builder.Services.AddSingleton<IProjectSkeletonService, ProjectSkeletonService>()
 builder.Services.AddSingleton<ITomlSerializerService, TomlSerializerService>();
 builder.Services.AddSingleton<IMarkdownFormatterService, MarkdownFormatterService>();
 
-// ✨ NEW: Add method formatter
+
 builder.Services.AddSingleton<IMethodFormatterService, MethodFormatterService>();
+
+builder.Services.AddSingleton<IMethodCallGraphService, MethodCallGraphService>();
 
 builder.Services.AddSingleton<INuGetPackageLoader, NuGetPackageLoader>();
 builder.Services.AddSingleton<INuGetPackageExplorer>(sp =>
@@ -35,46 +37,65 @@ builder.Services.AddSingleton<INuGetPackageExplorer>(sp =>
     var logger = sp.GetRequiredService<ILogger<NuGetPackageExplorer>>();
     return new NuGetPackageExplorer(loader, logger);
 });
-
 builder.Services.AddSingleton<IConnectionMultiplexer>(sp =>
 {
-    var configuration = ConfigurationOptions.Parse("localhost:6379");
-    configuration.AbortOnConnectFail = false;
-    configuration.ConnectTimeout = 5000;
-    configuration.SyncTimeout = 5000;
-    return ConnectionMultiplexer.Connect(configuration);
+    var config = builder.Configuration.GetSection("Redis");
+    var connectionString = config.GetValue<string>("ConnectionString") ?? "localhost:6379";
+
+    var configuration = ConfigurationOptions.Parse(connectionString);
+
+    // Apply settings from config with fallback defaults
+    configuration.AbortOnConnectFail = config.GetValue("AbortOnConnectFail", true);
+    configuration.ConnectTimeout = config.GetValue("ConnectTimeout", 3000);
+    configuration.SyncTimeout = config.GetValue("SyncTimeout", 3000);
+    configuration.ConnectRetry = config.GetValue("ConnectRetry", 2);
+    configuration.KeepAlive = config.GetValue("KeepAlive", 60);
+    configuration.AsyncTimeout = config.GetValue("AsyncTimeout", 5000);
+    configuration.DefaultDatabase = config.GetValue("DefaultDatabase", 0);
+    configuration.ReconnectRetryPolicy = new ExponentialRetry(
+        config.GetValue("ReconnectRetryBaseDelay", 5000)
+    );
+
+    var logger = sp.GetRequiredService<ILogger<Program>>();
+
+    try
+    {
+        var multiplexer = ConnectionMultiplexer.Connect(configuration);
+
+        multiplexer.ConnectionFailed += (sender, args) =>
+        {
+            logger.LogError("Redis connection failed: {EndPoint} - {FailureType}",
+                args.EndPoint, args.FailureType);
+        };
+
+        multiplexer.ConnectionRestored += (sender, args) =>
+        {
+            logger.LogInformation("Redis connection restored: {EndPoint}", args.EndPoint);
+        };
+
+        multiplexer.ErrorMessage += (sender, args) =>
+        {
+            logger.LogWarning("Redis error: {Message}", args.Message);
+        };
+
+        logger.LogInformation("Redis connected successfully to {ConnectionString}",
+            connectionString.Split(',')[0]); // Log endpoint without password
+
+        return multiplexer;
+    }
+    catch (Exception ex)
+    {
+        logger.LogCritical(ex, "Failed to connect to Redis at {ConnectionString}. Application cannot start without cache.",
+            connectionString.Split(',')[0]);
+        throw;
+    }
 });
+
+
 
 // Replace MemoryPackageMetadataCache with Redis
 builder.Services.AddSingleton<IPackageMetadataCache, RedisPackageMetadataCache>();
-// Rate limiting
-builder.Services.AddRateLimiter(options =>
-{
-    options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context =>
-    {
-        var clientId = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
 
-        return RateLimitPartition.GetFixedWindowLimiter(clientId, _ => new FixedWindowRateLimiterOptions
-        {
-            PermitLimit = 100,
-            Window = TimeSpan.FromHours(1),
-            QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
-            QueueLimit = 10
-        });
-    });
-
-    options.OnRejected = async (context, token) =>
-    {
-        context.HttpContext.Response.StatusCode = StatusCodes.Status429TooManyRequests;
-        await context.HttpContext.Response.WriteAsJsonAsync(new
-        {
-            error = "Rate limit exceeded",
-            retryAfter = context.Lease.TryGetMetadata(MetadataName.RetryAfter, out var retryAfter)
-                ? retryAfter.TotalSeconds
-                : 3600
-        }, token);
-    };
-});
 
 // MCP Server
 builder.Services.AddMcpServer()
@@ -97,8 +118,7 @@ app.Use(async (context, next) =>
     await next();
 });
 
-// Middleware pipeline
-app.UseRateLimiter();
+
 app.UseHttpsRedirection();
 
 app.UseAuthorization();

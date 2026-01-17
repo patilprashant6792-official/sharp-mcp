@@ -1,4 +1,5 @@
 ﻿using MCP.Core.Configuration;
+using MCP.Core.Models;
 using System.Text;
 
 namespace MCP.Core.Services;
@@ -268,6 +269,96 @@ public class MethodFormatterService : IMethodFormatterService
         md.AppendLine("```");
         md.AppendLine();
         md.AppendLine("</details>");
+
+        return md.ToString();
+    }
+
+    // ProjectExplorationServices/MarkdownFormatterService.cs
+    // UPDATE the FormatMethodCallGraph method in the existing class
+
+    public string FormatMethodCallGraph(MethodCallGraph graph)
+    {
+        var md = new StringBuilder();
+
+        md.AppendLine($"# Method Call Graph: `{graph.MethodName}`");
+        md.AppendLine();
+        md.AppendLine($"**Location:** `{graph.FilePath}` | Class: `{graph.ClassName}` | Line: {graph.LineNumber}");
+        md.AppendLine();
+
+        // INCOMING CALLS (CalledBy)
+        if (graph.CalledBy.Count == 0)
+        {
+            md.AppendLine("**Called By:** None (potential dead code)");
+        }
+        else
+        {
+            md.AppendLine($"**Called By ({graph.CalledBy.Count}):**");
+            md.AppendLine();
+
+            foreach (var caller in graph.CalledBy)
+            {
+                var needsClassName = !caller.Resolution.IsSingleClassFile;
+                var classHint = needsClassName ? $" (className: `{caller.Resolution.ExactClassName}`)" : "";
+
+                md.AppendLine($"- **{caller.ClassName}.{caller.MethodName}**");
+                md.AppendLine($"  - File: `{caller.FilePath}:{caller.LineNumber}`{classHint}");
+            }
+            md.AppendLine();
+        }
+
+        // OUTGOING CALLS (Calls)
+        if (graph.Calls.Count == 0)
+        {
+            md.AppendLine("**Calls:** None (no outgoing method calls detected)");
+        }
+        else
+        {
+            md.AppendLine($"**Calls ({graph.Calls.Count}):**");
+            md.AppendLine();
+
+            // Group by type
+            var systemCalls = graph.Calls.Where(c => c.ClassName.Contains("System") || c.ClassName == "Unknown").ToList();
+            var sameCalls = graph.Calls.Where(c => c.ClassName == "SameClass").ToList();
+            var externalCalls = graph.Calls.Except(systemCalls).Except(sameCalls).ToList();
+
+            if (sameCalls.Any())
+            {
+                md.AppendLine("**Same Class:**");
+                foreach (var call in sameCalls.Take(5))
+                {
+                    md.AppendLine($"- `{call.MethodName}()` - Line {call.LineNumber}");
+                }
+                if (sameCalls.Count > 5)
+                    md.AppendLine($"  - ...and {sameCalls.Count - 5} more");
+                md.AppendLine();
+            }
+
+            if (externalCalls.Any())
+            {
+                md.AppendLine("**External/Services:**");
+                foreach (var call in externalCalls.Take(5))
+                {
+                    md.AppendLine($"- `{call.ClassName}.{call.MethodName}()` - Line {call.LineNumber}");
+                }
+                if (externalCalls.Count > 5)
+                    md.AppendLine($"  - ...and {externalCalls.Count - 5} more");
+                md.AppendLine();
+            }
+
+            if (systemCalls.Any())
+            {
+                md.AppendLine("**System/Framework:**");
+                foreach (var call in systemCalls.Take(3))
+                {
+                    md.AppendLine($"- `{call.MethodName}()` - Line {call.LineNumber}");
+                }
+                if (systemCalls.Count > 3)
+                    md.AppendLine($"  - ...and {systemCalls.Count - 3} more framework calls");
+                md.AppendLine();
+            }
+        }
+
+        md.AppendLine($"**Total References:** Incoming: {graph.CalledBy.Count}, Outgoing: {graph.Calls.Count} | **Files Affected:** {graph.CalledBy.Select(c => c.FilePath).Distinct().Count()}");
 
         return md.ToString();
     }

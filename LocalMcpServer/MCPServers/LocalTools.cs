@@ -17,14 +17,15 @@ public class LocalTools
     private readonly ITomlSerializerService _tomlSerializer;
     private readonly INuGetPackageExplorer _packageExplorer;
     private readonly IMethodFormatterService _methodFormatter; // ✨ NEW
-
+    private readonly IMethodCallGraphService _callGraphService;
     public LocalTools(
         INuGetSearchService nugetService,
         IProjectSkeletonService projectSkeletonService,
         IMarkdownFormatterService markdownFormatter,
         ITomlSerializerService tomlSerializerService,
         INuGetPackageExplorer packageExplorer,
-        IMethodFormatterService methodFormatter) // ✨ NEW
+        IMethodFormatterService methodFormatter,
+        IMethodCallGraphService callGraphService) // ✨ NEW
     {
         _nugetService = nugetService;
         _projectSkeletonService = projectSkeletonService;
@@ -32,7 +33,10 @@ public class LocalTools
         _tomlSerializer = tomlSerializerService;
         _packageExplorer = packageExplorer;
         _methodFormatter = methodFormatter; // ✨ NEW
+        _callGraphService = callGraphService;
     }
+
+
 
     #region DateTime Tools
 
@@ -172,6 +176,44 @@ public class LocalTools
             throw new ArgumentException(
                 $"Project '{projectName}' not found.\n\n" +
                 $"Available projects:\n{projectList}");
+        }
+    }
+
+    [McpServerTool]
+    [Description("Analyzes method call graph - shows WHO calls this method and WHERE. " +
+      "Critical for understanding impact before modifying methods. " +
+      "Returns caller locations with exact file paths, line numbers, and class resolution hints for fetching caller implementations.")]
+    public async Task<string> AnalyzeMethodCallGraph(
+      [Description("Required: project name (e.g., 'LocalMcpServer', 'RisingTideAPI')")]
+        string projectName,
+
+      [Description("Required: relative file path (e.g., 'Services/UserService.cs')")]
+        string relativeFilePath,
+
+      [Description("Required: method name to analyze")]
+        string methodName,
+
+      [Description("Optional: class name if file has multiple classes")]
+        string? className = null,
+
+      [Description("Optional: include test files (default: false)")]
+        bool includeTests = false)
+    {
+        try
+        {
+            var graph = await _callGraphService.AnalyzeMethodDependenciesAsync(
+                projectName,
+                relativeFilePath,
+                methodName,
+                className,
+                includeTests,
+                depth: 1);
+
+            return _methodFormatter.FormatMethodCallGraph(graph);
+        }
+        catch (Exception ex)
+        {
+            return $"❌ Error analyzing method call graph: {ex.Message}";
         }
     }
 

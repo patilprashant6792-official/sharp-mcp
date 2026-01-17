@@ -1,4 +1,5 @@
 ﻿using MCP.Core.Configuration;
+using MCP.Core.Models;
 
 namespace MCP.Core.Services;
 
@@ -13,4 +14,6 @@ public interface IMethodFormatterService
     string FormatMethodImplementation(MethodImplementationInfo methodInfo);
 
     string FormatMethodImplementationsBatch(List<MethodImplementationInfo> methods);
+
+    string FormatMethodCallGraph(MethodCallGraph graph);
 }

@@ -97,3 +97,53 @@ public enum Severity
 {
     Low, Medium, High, Critical
 }
+
+// Models/DependencyGraphModel.cs - ADD these classes at the end of file
+
+/// <summary>
+/// Minimal method call graph - shows who calls this method
+/// </summary>
+public class MethodCallGraph
+{
+    public string ProjectName { get; set; } = string.Empty;
+    public string FilePath { get; set; } = string.Empty;
+    public string ClassName { get; set; } = string.Empty;
+    public string MethodName { get; set; } = string.Empty;
+    public int LineNumber { get; set; }
+
+    /// <summary>Methods that call this method</summary>
+    public List<CallSite> CalledBy { get; set; } = new();
+
+    // ADD THIS LINE:
+    /// <summary>Methods that this method calls</summary>
+    public List<CallSite> Calls { get; set; } = new();
+}
+
+/// <summary>
+/// Single call reference with resolution metadata
+/// </summary>
+public class CallSite
+{
+    public string ClassName { get; set; } = string.Empty;
+    public string MethodName { get; set; } = string.Empty;
+    public string FilePath { get; set; } = string.Empty;
+    public int LineNumber { get; set; }
+
+    /// <summary>Resolution metadata for tool chaining</summary>
+    public MethodResolutionInfo Resolution { get; set; } = new();
+}
+
+/// <summary>
+/// Metadata for exact method identification
+/// </summary>
+public class MethodResolutionInfo
+{
+    /// <summary>Exact class name</summary>
+    public string ExactClassName { get; set; } = string.Empty;
+
+    /// <summary>Total classes in file</summary>
+    public int ClassesInFile { get; set; }
+
+    /// <summary>Is single class in file? (className param optional)</summary>
+    public bool IsSingleClassFile { get; set; }
+}
