@@ -1,0 +1,29 @@
+{
+  "Projects": [
+    {
+      "Id": "ba2287d9-06ce-446f-89b1-7bc9b80c95b5",
+      "Name": "local-mcp-server",
+      "Path": "C:\\Users\\Aumni\\source\\repos\\dotnet-mcp-server\\LocalMcpServer",
+      "Description": "MCP server specially made for .automating .net development.",
+      "Enabled": true,
+      "AddedDate": "2026-01-18T05:07:38.280781Z"
+    },
+    {
+      "Id": "c58b3b81-92dd-4bf0-a749-cf3053d69d18",
+      "Name": "RisingTide.API.Host",
+      "Path": "C:\\Users\\Aumni\\source\\repos\\RisingTideAPI",
+      "Description": "Main backend API for Rising Tide platform one of the microservices",
+      "Enabled": true,
+      "AddedDate": "2026-01-18T05:11:08.9827678Z"
+    },
+    {
+      "Id": "0619251b-c6e2-4ce3-860b-8c12ee0782bd",
+      "Name": "RisingTide.Trade.MCP.Host/TradeCapture Service",
+      "Path": "C:\\Users\\Aumni\\source\\repos\\RisingTideTradeCaptureMCP\\RisingTideAI.Trade.MCP.Host",
+      "Description": "Rising tide api trades related microservice",
+      "Enabled": true,
+      "AddedDate": "2026-01-18T05:13:16.0041367Z"
+    }
+  ],
+  "MaxProjects": 10
+}

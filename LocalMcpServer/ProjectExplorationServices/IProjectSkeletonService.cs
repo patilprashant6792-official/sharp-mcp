@@ -24,6 +24,7 @@ public interface IProjectSkeletonService
 
     Task<string> GetProjectSkeletonAsync(
         string projectName,
+        string? sinceTimestamp = null,
         CancellationToken cancellationToken = default);
 
     IReadOnlyDictionary<string, string> GetAvailableProjects();
@@ -35,13 +36,13 @@ public interface IProjectSkeletonService
         string relativeFilePath,
         CancellationToken cancellationToken = default);
 
-    // ✨ NEW: Batch method fetching
     Task<List<MethodImplementationInfo>> FetchMethodImplementationsBatchAsync(
         string projectName,
         string relativeFilePath,
         string[] methodNames,
         string? className = null,
         CancellationToken cancellationToken = default);
+
     Task<FolderSearchResponse> SearchFolderFilesAsync(
         string projectName,
         string folderPath,

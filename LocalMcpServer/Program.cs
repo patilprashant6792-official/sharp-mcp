@@ -21,7 +21,12 @@ builder.Services.AddMemoryCache();
 
 // Register NuGetService as singleton (thread-safe with semaphore)
 builder.Services.AddSingleton<INuGetSearchService, NuGetSearchService>();
-builder.Services.AddSingleton<IProjectSkeletonService, ProjectSkeletonService>();
+builder.Services.AddSingleton<IProjectSkeletonService>(sp =>
+{
+    var config = sp.GetRequiredService<IConfiguration>();
+    var projectConfigService = sp.GetRequiredService<IProjectConfigService>();
+    return new ProjectSkeletonService(config, projectConfigService);
+});
 builder.Services.AddSingleton<ITomlSerializerService, TomlSerializerService>();
 builder.Services.AddSingleton<IMarkdownFormatterService, MarkdownFormatterService>();
 
@@ -32,7 +37,8 @@ builder.Services.AddSingleton<IMethodCallGraphService, MethodCallGraphService>()
 
 builder.Services.AddSingleton<ICodeSearchService, CodeSearchService>();
 builder.Services.AddSingleton<ICodeSearchFormatterService, CodeSearchFormatterService>();
-
+// Project configuration service (singleton for file access)
+builder.Services.AddSingleton<IProjectConfigService, ProjectConfigService>();
 builder.Services.AddSingleton<INuGetPackageLoader, NuGetPackageLoader>();
 builder.Services.AddSingleton<INuGetPackageExplorer>(sp =>
 {
@@ -125,6 +131,11 @@ app.Use(async (context, next) =>
 app.UseHttpsRedirection();
 
 app.UseAuthorization();
+
+// ✨✨✨ CRITICAL: ADD THESE TWO LINES ✨✨✨
+app.UseStaticFiles();
+app.UseDefaultFiles();
+// ✨✨✨ END CRITICAL SECTION ✨✨✨
 
 app.MapControllers();
 app.MapHealthChecks("/health");

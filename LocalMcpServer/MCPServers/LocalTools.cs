@@ -161,17 +161,16 @@ public class LocalTools
     private string ProjectSkeletonDescription => _projectSkeletonService.GetToolDescription();
 
     [McpServerTool]
-    [Description("Retrieves the complete file tree structure and content of a pre-configured project. Shows folder hierarchy, file paths, and full file contents to understand existing architecture and patterns. Use this before modifying or extending projects to understand current structure.\n\nConfigured projects:" +
-        "LocalMcpServer - Main MCP server host project with tool implementations" +
-        "RisingTideTradeCapture - Rising Tide AI Trade Capture project" +
-        "RisingTideAPI - Rising Tide AI API project")]
+    [Description("Retrieves the complete file tree structure and content of a pre-configured project. Shows folder hierarchy, file paths, and full file contents to understand existing architecture and patterns. Use this before modifying or extending projects to understand current structure.\n\n Pass project name as * to understand current available projects")]
     public async Task<string> GetProjectSkeleton(
-     [Description("Required: name of the project to analyze (e.g., 'MCP.Host', 'MCP.Core')")]
-    string projectName)
+    [Description("Required: name of the project to analyze (e.g., 'MCP.Host', 'MCP.Core')")]
+    string projectName,
+    [Description("Optional: Unix timestamp or ISO 8601 date (e.g., '2026-01-17T00:00:00Z'). Returns only files modified after this date.")]
+    string? sinceTimestamp = null)
     {
         try
         {
-            return await _projectSkeletonService.GetProjectSkeletonAsync(projectName);
+            return await _projectSkeletonService.GetProjectSkeletonAsync(projectName, sinceTimestamp);
         }
         catch (KeyNotFoundException)
         {
@@ -179,9 +178,8 @@ public class LocalTools
             var projectList = string.Join("\n", availableProjects.Select(p =>
                 $"• {p.Key} - {p.Value.Description}"));
 
-            throw new ArgumentException(
-                $"Project '{projectName}' not found.\n\n" +
-                $"Available projects:\n{projectList}");
+            return 
+                $"Available projects:\n{projectList}";
         }
     }
 
@@ -190,7 +188,7 @@ public class LocalTools
       "Critical for understanding impact before modifying methods. " +
       "Returns caller locations with exact file paths, line numbers, and class resolution hints for fetching caller implementations.")]
     public async Task<string> AnalyzeMethodCallGraph(
-      [Description("Required: project name (e.g., 'LocalMcpServer', 'RisingTideAPI')")]
+      [Description("Required: project name")]
         string projectName,
 
       [Description("Required: relative file path (e.g., 'Services/UserService.cs')")]
@@ -230,7 +228,7 @@ public class LocalTools
         "Use this to explore folders that were collapsed in get_project_skeleton (folders with >50 files). " +
         "Supports optional search filtering by filename.")]
     public async Task<string> SearchFolderFiles(
-        [Description("Project name (e.g., 'LocalMcpServer', 'RisingTideAPI')")]
+        [Description("Project name")]
     string projectName,
 
         [Description("Relative folder path from project root (e.g., 'RisingTide.Common.DataAccess/Entities/Exchange')")]
@@ -288,7 +286,7 @@ public class LocalTools
     [McpServerTool]
     [Description("Analyzes a C# file and returns structured metadata including methods, properties, fields, attributes, constructor dependencies, and file classification. Use this to understand implementation patterns before adding new code.")]
     public async Task<string> AnalyzeCSharpFile(
-    [Description("Required: project name (e.g., 'LocalMcpServer', 'RisingTideAPI')")]
+    [Description("Required: project name")]
     string projectName,
     [Description("Required: relative path to C# file from project root (e.g., 'MCPServers/MCPTools.cs', 'Controllers/ToolsController.cs')")]
     string relativeFilePath,
@@ -323,7 +321,7 @@ public class LocalTools
     "BATCH MODE: Pass multiple method names (comma-separated) to fetch them efficiently in one call (saves ~500 tokens per additional method). " +
     "Returns complete implementation including signature, body with line numbers, attributes, and XML documentation.")]
     public async Task<string> FetchMethodImplementation(
-    [Description("Required: project name (e.g., 'LocalMcpServer', 'RisingTideAPI')")]
+    [Description("Required: project name ")]
     string projectName,
     [Description("Required: relative path to C# file from project root (e.g., 'Services/NugetService.cs')")]
     string relativeFilePath,
@@ -380,7 +378,7 @@ public class LocalTools
     "SECURITY: Blocks access to sensitive files (appsettings.json, secrets, credentials, .env files, etc.). " +
     "Use this for Program.cs, controllers, services, Dockerfile, and other non-sensitive files.")]
     public async Task<string> ReadFileContent(
-    [Description("Required: project name (e.g., 'LocalMcpServer', 'RisingTideAPI')")]
+    [Description("Required: project name ")]
     string projectName,
     [Description("Required: relative file path from project root (e.g., 'Program.cs', 'Controllers/MyController.cs'). " +
         "⚠️ Cannot access: appsettings.json, secrets.json, .env, credentials, or files in bin/obj/node_modules directories.")]
@@ -444,7 +442,7 @@ public class LocalTools
     [Description("Required: search query (class name, method name, keyword)")]
     string query,
 
-    [Description("Required: project name (e.g., 'LocalMcpServer', 'RisingTideAPI')")]
+    [Description("Required: project name")]
     string projectName,
 
     [Description("Optional: filter by member type (All, Class, Interface, Method, Property, Field). Default: All")]

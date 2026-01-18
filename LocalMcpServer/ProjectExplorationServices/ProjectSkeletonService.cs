@@ -27,21 +27,32 @@ public class ProjectSkeletonService : IProjectSkeletonService
 
     private readonly Dictionary<string, ProjectInfo> _projectMappings;
 
-    public ProjectSkeletonService(IConfiguration configuration)
-    
+    public ProjectSkeletonService(
+    IConfiguration configuration,
+    IProjectConfigService projectConfigService)
     {
-        var mappingsConfig = configuration
-    .GetSection(ProjectMappingsConfiguration.SectionName)
-    .Get<ProjectMappingsConfiguration>();
+       
+            // Fallback to projects.json from UI config
+            var projectConfig = projectConfigService.LoadProjects();
+            _projectMappings = projectConfig.Projects
+                .Where(p => p.Enabled) // Only load enabled projects
+                .ToDictionary(
+                    p => p.Name,
+                    p => new ProjectInfo
+                    {
+                        Path = p.Path,
+                        Description = p.Description
+                    }
+                );
 
-        if (mappingsConfig?.Projects == null || mappingsConfig.Projects.Count == 0)
-        {
-            throw new InvalidOperationException(
-                $"No project mappings found in configuration section '{ProjectMappingsConfiguration.SectionName}'. " +
-                "Please configure at least one project in appsettings.json");
-        }
-
-        _projectMappings = mappingsConfig.Projects;
+            if (_projectMappings.Count == 0)
+            {
+                throw new InvalidOperationException(
+                    "No projects configured. Please configure projects via:\n" +
+                    "1. Config UI at http://localhost:5000/config.html\n" +
+                    "2. Or add 'ProjectMappings' section in appsettings.json");
+            }
+        
     }
 
     public ProjectSkeletonService(Dictionary<string, ProjectInfo> projectMappings)
@@ -778,24 +789,71 @@ Use this tool to understand project architecture, analyze dependencies, review p
         return _projectMappings;
     }
 
-    public async Task<string> GetProjectSkeletonAsync(string projectName, CancellationToken cancellationToken = default)
+    public async Task<string> GetProjectSkeletonAsync(
+        string projectName,
+        string? sinceTimestamp = null,
+        CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(projectName))
             throw new ArgumentException("Project name cannot be null or empty.", nameof(projectName));
+
         if (!_projectMappings.TryGetValue(projectName, out var projectInfo))
             throw new KeyNotFoundException($"Project '{projectName}' not found. Available projects: {string.Join(", ", _projectMappings.Keys)}");
+
         var projectPath = projectInfo.Path;
         if (!Directory.Exists(projectPath))
             throw new DirectoryNotFoundException($"Project path '{projectPath}' does not exist.");
 
+        DateTime? cutoffDate = null;
+        if (!string.IsNullOrWhiteSpace(sinceTimestamp))
+        {
+            cutoffDate = ParseTimestamp(sinceTimestamp);
+        }
+
         var markdown = new StringBuilder();
+
+        if (cutoffDate.HasValue)
+        {
+            // Changed files mode
+            markdown.AppendLine($"# Changed Files Since {sinceTimestamp}");
+            markdown.AppendLine($"**Project:** {projectName}");
+            markdown.AppendLine($"**Description:** {projectInfo.Description}");
+            markdown.AppendLine($"**Path:** `{projectPath}`");
+            markdown.AppendLine($"**Cutoff Date:** {cutoffDate:yyyy-MM-dd HH:mm:ss} UTC");
+            markdown.AppendLine($"**Generated:** {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC");
+            markdown.AppendLine();
+
+            var changedFiles = GetChangedFiles(projectPath, cutoffDate.Value);
+
+            if (changedFiles.Count == 0)
+            {
+                markdown.AppendLine("**No files changed since the specified timestamp.**");
+                return markdown.ToString();
+            }
+
+            markdown.AppendLine($"**Total Changed Files:** {changedFiles.Count}");
+            markdown.AppendLine();
+            markdown.AppendLine("## Changed Files");
+            markdown.AppendLine("```");
+
+            foreach (var file in changedFiles.OrderBy(f => f.RelativePath))
+            {
+                var indicator = file.SizeKB > 15 ? "⚠️" : "✓";
+                markdown.AppendLine($"├── {file.RelativePath}");
+                markdown.AppendLine($"│   Modified: {file.LastModified:yyyy-MM-dd HH:mm:ss} UTC ({file.SizeDisplay}, {file.LineCount} lines) {indicator}");
+            }
+
+            markdown.AppendLine("```");
+            return markdown.ToString();
+        }
+
+        // Full skeleton mode (existing logic)
         markdown.AppendLine($"# Project Skeleton: {projectName}");
         markdown.AppendLine($"**Description:** {projectInfo.Description}");
         markdown.AppendLine($"**Path:** `{projectPath}`");
         markdown.AppendLine($"**Generated:** {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC");
         markdown.AppendLine();
 
-        // Add legend for file size indicators
         markdown.AppendLine("## Legend");
         markdown.AppendLine("- ✓ **Small file** (≤15KB) - Use `read_file_content`");
         markdown.AppendLine("- ⚠️ **Large file** (>15KB) - Use `analyze_c_sharp_file` + `fetch_method_implementation`");
@@ -809,10 +867,12 @@ Use this tool to understand project architecture, analyze dependencies, review p
 
         var slnFiles = Directory.EnumerateFiles(projectPath, "*.sln", SearchOption.TopDirectoryOnly).ToList();
         var slnxFiles = Directory.EnumerateFiles(projectPath, "*.slnx", SearchOption.TopDirectoryOnly).ToList();
+
         foreach (var slnFile in slnFiles)
         {
             await AppendFileContentAsync(markdown, slnFile, "Solution File (.sln)", cancellationToken);
         }
+
         foreach (var slnxFile in slnxFiles)
         {
             await AppendFileContentAsync(markdown, slnxFile, "Solution File (.slnx)", cancellationToken);
@@ -821,6 +881,7 @@ Use this tool to understand project architecture, analyze dependencies, review p
         var csprojFiles = Directory.EnumerateFiles(projectPath, "*.csproj", SearchOption.AllDirectories)
             .Where(f => !IsInExcludedDirectory(f, projectPath))
             .ToList();
+
         foreach (var csprojFile in csprojFiles)
         {
             var relativePath = Path.GetRelativePath(projectPath, csprojFile);
@@ -828,6 +889,66 @@ Use this tool to understand project architecture, analyze dependencies, review p
         }
 
         return markdown.ToString();
+    }
+
+    private DateTime ParseTimestamp(string timestamp)
+    {
+        // Try Unix timestamp first
+        if (long.TryParse(timestamp, out var unixSeconds))
+        {
+            return DateTimeOffset.FromUnixTimeSeconds(unixSeconds).UtcDateTime;
+        }
+
+        // Try ISO 8601 format
+        if (DateTime.TryParse(timestamp, null, System.Globalization.DateTimeStyles.RoundtripKind, out var parsedDate))
+        {
+            return parsedDate.ToUniversalTime();
+        }
+
+        throw new ArgumentException(
+            $"Invalid timestamp format: '{timestamp}'. " +
+            "Expected Unix timestamp (e.g., '1705449600') or ISO 8601 date (e.g., '2026-01-17T00:00:00Z')");
+    }
+
+    private List<ChangedFileInfo> GetChangedFiles(string projectPath, DateTime cutoffDate)
+    {
+        var changedFiles = new List<ChangedFileInfo>();
+
+        var allFiles = Directory.EnumerateFiles(projectPath, "*.*", SearchOption.AllDirectories)
+            .Where(f => !IsInExcludedDirectory(f, projectPath))
+            .ToList();
+
+        foreach (var filePath in allFiles)
+        {
+            var fileInfo = new FileInfo(filePath);
+
+            if (fileInfo.LastWriteTimeUtc > cutoffDate)
+            {
+                var relativePath = Path.GetRelativePath(projectPath, filePath);
+                var lineCount = GetLineCountAsync(filePath, CancellationToken.None).GetAwaiter().GetResult();
+                var sizeKB = fileInfo.Length / 1024.0;
+
+                changedFiles.Add(new ChangedFileInfo
+                {
+                    RelativePath = relativePath,
+                    LastModified = fileInfo.LastWriteTimeUtc,
+                    SizeKB = sizeKB,
+                    SizeDisplay = FormatFileSize(fileInfo.Length),
+                    LineCount = lineCount
+                });
+            }
+        }
+
+        return changedFiles;
+    }
+
+    private class ChangedFileInfo
+    {
+        public string RelativePath { get; set; } = string.Empty;
+        public DateTime LastModified { get; set; }
+        public double SizeKB { get; set; }
+        public string SizeDisplay { get; set; } = string.Empty;
+        public int LineCount { get; set; }
     }
 
     private async Task GenerateFolderTreeAsync(
