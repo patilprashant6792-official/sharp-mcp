@@ -671,6 +671,7 @@ Use this tool to understand project architecture, analyze dependencies, review p
                 if (!includePrivateMembers && !method.Modifiers.Any(m => m.IsKind(SyntaxKind.PublicKeyword)))
                     continue;
 
+                var methodSpan = tree.GetLineSpan(method.Span);
                 var methodInfo = new MethodInfo
                 {
                     Name = method.Identifier.Text,
@@ -684,7 +685,9 @@ Use this tool to understand project architecture, analyze dependencies, review p
                             DefaultValue = p.Default?.Value.ToString()
                         })
                         .ToList(),
-                    LineNumber = tree.GetLineSpan(method.Span).StartLinePosition.Line + 1
+                    LineNumber = methodSpan.StartLinePosition.Line + 1,
+                    LineNumberStart = methodSpan.StartLinePosition.Line + 1,
+                    LineNumberEnd = methodSpan.EndLinePosition.Line + 1
                 };
 
                 // Extract attributes
@@ -737,6 +740,7 @@ Use this tool to understand project architecture, analyze dependencies, review p
                 if (!includePrivateMembers && !property.Modifiers.Any(m => m.IsKind(SyntaxKind.PublicKeyword)))
                     continue;
 
+                var propertySpan = tree.GetLineSpan(property.Span);
                 var propInfo = new PropertyInfo
                 {
                     Name = property.Identifier.Text,
@@ -744,7 +748,9 @@ Use this tool to understand project architecture, analyze dependencies, review p
                     Modifiers = property.Modifiers.Select(m => m.Text).ToList(),
                     HasGetter = property.AccessorList?.Accessors.Any(a => a.IsKind(SyntaxKind.GetAccessorDeclaration)) ?? false,
                     HasSetter = property.AccessorList?.Accessors.Any(a => a.IsKind(SyntaxKind.SetAccessorDeclaration)) ?? false,
-                    LineNumber = tree.GetLineSpan(property.Span).StartLinePosition.Line + 1
+                    LineNumber = propertySpan.StartLinePosition.Line + 1,
+                    LineNumberStart = propertySpan.StartLinePosition.Line + 1,
+                    LineNumberEnd = propertySpan.EndLinePosition.Line + 1
                 };
 
                 classInfo.Properties.Add(propInfo);
@@ -756,6 +762,7 @@ Use this tool to understand project architecture, analyze dependencies, review p
                 if (!includePrivateMembers && !field.Modifiers.Any(m => m.IsKind(SyntaxKind.PublicKeyword)))
                     continue;
 
+                var fieldSpan = tree.GetLineSpan(field.Span);
                 foreach (var variable in field.Declaration.Variables)
                 {
                     var fieldInfo = new FieldInfo
@@ -766,7 +773,9 @@ Use this tool to understand project architecture, analyze dependencies, review p
                         IsReadOnly = field.Modifiers.Any(m => m.IsKind(SyntaxKind.ReadOnlyKeyword)),
                         IsStatic = field.Modifiers.Any(m => m.IsKind(SyntaxKind.StaticKeyword)),
                         IsConst = field.Modifiers.Any(m => m.IsKind(SyntaxKind.ConstKeyword)),
-                        LineNumber = tree.GetLineSpan(field.Span).StartLinePosition.Line + 1
+                        LineNumber = fieldSpan.StartLinePosition.Line + 1,
+                        LineNumberStart = fieldSpan.StartLinePosition.Line + 1,
+                        LineNumberEnd = fieldSpan.EndLinePosition.Line + 1
                     };
 
                     classInfo.Fields.Add(fieldInfo);
@@ -1232,7 +1241,7 @@ public class ClassInfo
     public List<ParameterInfo> ConstructorParameters { get; set; } = new();
     public List<MethodInfo> Methods { get; set; } = new();
     public List<PropertyInfo> Properties { get; set; } = new();
-    public List<FieldInfo> Fields { get; set; } = new(); // ADD THIS
+    public List<FieldInfo> Fields { get; set; } = new();
     public int LineNumber { get; set; }
 }
 
@@ -1250,6 +1259,16 @@ public class MethodInfo
     /// Includes attributes if present
     /// </summary>
     public int LineNumber { get; set; }
+
+    /// <summary>
+    /// Starting line number of the method (including attributes and documentation)
+    /// </summary>
+    public int LineNumberStart { get; set; }
+
+    /// <summary>
+    /// Ending line number of the method (last line of the closing brace)
+    /// </summary>
+    public int LineNumberEnd { get; set; }
 }
 
 public class FieldInfo
@@ -1261,6 +1280,16 @@ public class FieldInfo
     public bool IsStatic { get; set; }
     public bool IsConst { get; set; }
     public int LineNumber { get; set; }
+
+    /// <summary>
+    /// Starting line number of the field declaration
+    /// </summary>
+    public int LineNumberStart { get; set; }
+
+    /// <summary>
+    /// Ending line number of the field declaration
+    /// </summary>
+    public int LineNumberEnd { get; set; }
 }
 
 public class PropertyInfo
@@ -1275,6 +1304,16 @@ public class PropertyInfo
     /// Line number where the property declaration starts (1-based)
     /// </summary>
     public int LineNumber { get; set; }
+
+    /// <summary>
+    /// Starting line number of the property (including attributes)
+    /// </summary>
+    public int LineNumberStart { get; set; }
+
+    /// <summary>
+    /// Ending line number of the property
+    /// </summary>
+    public int LineNumberEnd { get; set; }
 }
 
 public class ParameterInfo
@@ -1289,6 +1328,7 @@ public class AttributeInfo
     public string Name { get; set; } = string.Empty;
     public Dictionary<string, string> Properties { get; set; } = new();
 }
+
 public class FolderSearchResponse
 {
     public string ProjectName { get; set; } = string.Empty;

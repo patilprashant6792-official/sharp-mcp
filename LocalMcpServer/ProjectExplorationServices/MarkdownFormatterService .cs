@@ -117,7 +117,8 @@ public class MarkdownFormatterService : IMarkdownFormatterService
             {
                 var modi = string.Join(" ", prop.Modifiers);
                 var accessors = BuildAccessorString(prop);
-                md.AppendLine($"{modi} {prop.Type} {prop.Name} {{ {accessors} }} // Line {prop.LineNumber}");
+                var lineInfo = FormatLineRange(prop.LineNumberStart, prop.LineNumberEnd);
+                md.AppendLine($"{modi} {prop.Type} {prop.Name} {{ {accessors} }} {lineInfo}");
             }
             md.AppendLine("```");
             md.AppendLine();
@@ -129,14 +130,15 @@ public class MarkdownFormatterService : IMarkdownFormatterService
             md.AppendLine();
             md.AppendLine("#### Fields (" + classInfo.Fields.Count + ")");
             md.AppendLine();
+            md.AppendLine("```csharp");
             foreach (var field in classInfo.Fields)
             {
                 var modif = string.Join(" ", field.Modifiers);
-                md.AppendLine($"```csharp");
-                md.AppendLine($"{modif} {field.Type} {field.Name}; // Line {field.LineNumber}");
-                md.AppendLine($"```");
-                md.AppendLine();
+                var lineInfo = FormatLineRange(field.LineNumberStart, field.LineNumberEnd);
+                md.AppendLine($"{modif} {field.Type} {field.Name}; {lineInfo}");
             }
+            md.AppendLine("```");
+            md.AppendLine();
         }
 
         // Methods (if any)
@@ -156,7 +158,7 @@ public class MarkdownFormatterService : IMarkdownFormatterService
     {
         md.AppendLine("```csharp");
 
-        // ✨ NEW: Display attributes before method signature
+        // Display attributes before method signature
         if (method.Attributes.Any())
         {
             foreach (var attr in method.Attributes)
@@ -178,10 +180,22 @@ public class MarkdownFormatterService : IMarkdownFormatterService
 
         var modifiers = string.Join(" ", method.Modifiers);
         var paramStr = FormatParameters(method.Parameters);
+        var lineInfo = FormatLineRange(method.LineNumberStart, method.LineNumberEnd);
 
-        md.AppendLine($"{modifiers} {method.ReturnType} {method.Name}({paramStr}) // Line {method.LineNumber}");
+        md.AppendLine($"{modifiers} {method.ReturnType} {method.Name}({paramStr}) {lineInfo}");
         md.AppendLine("```");
         md.AppendLine();
+    }
+
+    private string FormatLineRange(int start, int end)
+    {
+        if (start == 0 && end == 0)
+            return string.Empty;
+
+        if (start == end)
+            return $"// Line {start}";
+
+        return $"// Lines {start}-{end}";
     }
 
     private string FormatParameters(List<ParameterInfo> parameters)

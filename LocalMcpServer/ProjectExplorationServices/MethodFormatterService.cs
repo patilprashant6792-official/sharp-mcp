@@ -6,10 +6,6 @@ namespace MCP.Core.Services;
 
 public class MethodFormatterService : IMethodFormatterService
 {
-    /// <summary>
-    /// Formats multiple method implementations in a compact, token-efficient format.
-    /// Reduces repetition by sharing common context (project, file, class, namespace).
-    /// </summary>
     public string FormatMethodImplementationsBatch(List<MethodImplementationInfo> methods)
     {
         if (methods == null || methods.Count == 0)
@@ -273,8 +269,6 @@ public class MethodFormatterService : IMethodFormatterService
         return md.ToString();
     }
 
-    // ProjectExplorationServices/MarkdownFormatterService.cs
-    // UPDATE the FormatMethodCallGraph method in the existing class
 
     public string FormatMethodCallGraph(MethodCallGraph graph)
     {
