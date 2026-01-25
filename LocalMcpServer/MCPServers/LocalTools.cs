@@ -434,33 +434,35 @@ public class LocalTools
     }
 
     [McpServerTool]
-    [Description("Global code search across project - finds classes, methods, properties, fields, interfaces by name or keyword. " +
-    "Returns ranked results with file locations and member types. Use when you don't know where code lives. " +
-    "Example: search_code_globally('Redis') → finds all Redis-related code. " +
-    "Supports filtering by member type (Class, Method, Property, Field, Interface, All).")]
+    [Description(@"Global code search across project(s) - finds classes, methods, properties, fields, interfaces by name or keyword.
+
+WILDCARD SUPPORT: Pass projectName='*' to search across ALL configured projects simultaneously.
+
+Returns ranked results with file locations and member types.
+
+Examples:
+- Single project: search_code_globally('RisingTideAPI', 'Redis')
+- ALL projects:   search_code_globally('*', 'Redis')  ← Search everything!
+
+Use cases:
+- Security audits: search_code_globally('*', 'Authorize')
+- Dependency analysis: search_code_globally('*', 'IUserService')  
+- Refactoring impact: Find all usages before renaming
+
+Supports filtering by member type (Class, Interface, Method, Property, Field, All).")]
     public async Task<string> SearchCodeGlobally(
-    [Description("Required: search query (class name, method name, keyword)")]
-    string query,
-
-    [Description("Required: project name")]
-    string projectName,
-
-    [Description("Optional: filter by member type (All, Class, Interface, Method, Property, Field). Default: All")]
-    string memberType = "All",
-
-    [Description("Optional: case sensitive search. Default: false")]
-    bool caseSensitive = false,
-
-    [Description("Optional: maximum results to return (default: 20, max: 100)")]
-    int topK = 20)
+     string query,
+     string projectName,  // Use "*" for all projects
+     string memberType = "All",
+     bool caseSensitive = false,
+     int topK = 20)
     {
         try
         {
             if (!Enum.TryParse<CodeMemberType>(memberType, ignoreCase: true, out var parsedMemberType))
-                throw new ArgumentException($"Invalid member type '{memberType}'. Valid values: All, Class, Interface, Method, Property, Field");
-
-            if (topK < 1 || topK > 100)
-                throw new ArgumentException("topK must be between 1 and 100");
+            {
+                return $"❌ Invalid member type: '{memberType}'. Valid values: {string.Join(", ", Enum.GetNames<CodeMemberType>())}";
+            }
 
             var request = new CodeSearchRequest
             {
@@ -476,7 +478,7 @@ public class LocalTools
         }
         catch (Exception ex)
         {
-            return $"# ❌ Search Failed\n\n**Error:** {ex.Message}\n\n**Type:** {ex.GetType().Name}";
+            return $"❌ Search failed: {ex.Message}";
         }
     }
 

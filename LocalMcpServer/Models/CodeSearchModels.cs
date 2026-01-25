@@ -9,7 +9,8 @@ public enum CodeMemberType
     Property,
     Field,
     Enum,
-    Struct
+    Struct,
+    Attribute  // ✨ NEW: Support searching for attributes like [HttpPost], [Authorize], etc.
 }
 
 public class CodeSearchRequest
@@ -29,6 +30,7 @@ public class CodeSearchResponse
     public required List<CodeSearchResult> Results { get; set; }
     public TimeSpan SearchDuration { get; set; }
     public int FilesScanned { get; set; }
+    public int ProjectsSearched { get; set; } = 1;
 }
 
 public class CodeSearchResult
@@ -38,8 +40,10 @@ public class CodeSearchResult
     public required string FilePath { get; set; }
     public int LineNumber { get; set; }
     public string? ParentClass { get; set; }
+    public string? ParentMember { get; set; }  // ✨ NEW: For attributes - shows which method/class/property has this attribute
     public string? Signature { get; set; }
     public string? TypeInfo { get; set; }
     public required List<string> Modifiers { get; set; }
     public double RelevanceScore { get; set; }
+    public string? ProjectName { get; set; }
 }

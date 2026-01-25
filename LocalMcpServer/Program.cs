@@ -124,7 +124,7 @@ app.Use(async (context, next) =>
     context.Response.Headers["X-Frame-Options"] = "DENY";
     context.Response.Headers["X-XSS-Protection"] = "1; mode=block";
     context.Response.Headers["Referrer-Policy"] = "strict-origin-when-cross-origin";
-    await next();
+        await next();
 });
 
 

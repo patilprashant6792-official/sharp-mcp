@@ -647,6 +647,38 @@ Use this tool to understand project architecture, analyze dependencies, review p
                 LineNumber = tree.GetLineSpan(classDecl.Span).StartLinePosition.Line + 1
             };
 
+            // Extract class-level attributes
+            foreach (var attrList in classDecl.AttributeLists)
+            {
+                foreach (var attr in attrList.Attributes)
+                {
+                    var attrInfo = new AttributeInfo
+                    {
+                        Name = attr.Name.ToString()
+                    };
+
+                    if (attr.ArgumentList != null)
+                    {
+                        foreach (var arg in attr.ArgumentList.Arguments)
+                        {
+                            if (arg.NameEquals != null)
+                            {
+                                var key = arg.NameEquals.Name.ToString();
+                                var value = arg.Expression.ToString().Trim('"');
+                                attrInfo.Properties[key] = value;
+                            }
+                            else
+                            {
+                                attrInfo.Properties[$"arg{attrInfo.Properties.Count}"] =
+                                    arg.Expression.ToString().Trim('"');
+                            }
+                        }
+                    }
+
+                    classInfo.Attributes.Add(attrInfo);
+                }
+            }
+
             // Extract constructor for DI analysis
             var constructor = classDecl.Members
                 .OfType<ConstructorDeclarationSyntax>()
@@ -690,7 +722,7 @@ Use this tool to understand project architecture, analyze dependencies, review p
                     LineNumberEnd = methodSpan.EndLinePosition.Line + 1
                 };
 
-                // Extract attributes
+                // Extract method-level attributes
                 foreach (var attrList in method.AttributeLists)
                 {
                     foreach (var attr in attrList.Attributes)
@@ -753,10 +785,42 @@ Use this tool to understand project architecture, analyze dependencies, review p
                     LineNumberEnd = propertySpan.EndLinePosition.Line + 1
                 };
 
+                // Extract property-level attributes
+                foreach (var attrList in property.AttributeLists)
+                {
+                    foreach (var attr in attrList.Attributes)
+                    {
+                        var attrInfo = new AttributeInfo
+                        {
+                            Name = attr.Name.ToString()
+                        };
+
+                        if (attr.ArgumentList != null)
+                        {
+                            foreach (var arg in attr.ArgumentList.Arguments)
+                            {
+                                if (arg.NameEquals != null)
+                                {
+                                    var key = arg.NameEquals.Name.ToString();
+                                    var value = arg.Expression.ToString().Trim('"');
+                                    attrInfo.Properties[key] = value;
+                                }
+                                else
+                                {
+                                    attrInfo.Properties[$"arg{attrInfo.Properties.Count}"] =
+                                        arg.Expression.ToString().Trim('"');
+                                }
+                            }
+                        }
+
+                        propInfo.Attributes.Add(attrInfo);
+                    }
+                }
+
                 classInfo.Properties.Add(propInfo);
             }
 
-            // ✨ NEW: Extract fields (public only OR all if includePrivateMembers=true)
+            // Extract fields (public only OR all if includePrivateMembers=true)
             foreach (var field in classDecl.Members.OfType<FieldDeclarationSyntax>())
             {
                 if (!includePrivateMembers && !field.Modifiers.Any(m => m.IsKind(SyntaxKind.PublicKeyword)))
@@ -777,6 +841,38 @@ Use this tool to understand project architecture, analyze dependencies, review p
                         LineNumberStart = fieldSpan.StartLinePosition.Line + 1,
                         LineNumberEnd = fieldSpan.EndLinePosition.Line + 1
                     };
+
+                    // Extract field-level attributes
+                    foreach (var attrList in field.AttributeLists)
+                    {
+                        foreach (var attr in attrList.Attributes)
+                        {
+                            var attrInfo = new AttributeInfo
+                            {
+                                Name = attr.Name.ToString()
+                            };
+
+                            if (attr.ArgumentList != null)
+                            {
+                                foreach (var arg in attr.ArgumentList.Arguments)
+                                {
+                                    if (arg.NameEquals != null)
+                                    {
+                                        var key = arg.NameEquals.Name.ToString();
+                                        var value = arg.Expression.ToString().Trim('"');
+                                        attrInfo.Properties[key] = value;
+                                    }
+                                    else
+                                    {
+                                        attrInfo.Properties[$"arg{attrInfo.Properties.Count}"] =
+                                            arg.Expression.ToString().Trim('"');
+                                    }
+                                }
+                            }
+
+                            fieldInfo.Attributes.Add(attrInfo);
+                        }
+                    }
 
                     classInfo.Fields.Add(fieldInfo);
                 }
@@ -1242,6 +1338,7 @@ public class ClassInfo
     public List<MethodInfo> Methods { get; set; } = new();
     public List<PropertyInfo> Properties { get; set; } = new();
     public List<FieldInfo> Fields { get; set; } = new();
+    public List<AttributeInfo> Attributes { get; set; } = new();  // ADD THIS LINE
     public int LineNumber { get; set; }
 }
 
@@ -1279,6 +1376,7 @@ public class FieldInfo
     public bool IsReadOnly { get; set; }
     public bool IsStatic { get; set; }
     public bool IsConst { get; set; }
+    public List<AttributeInfo> Attributes { get; set; } = new();  // ADD THIS LINE
     public int LineNumber { get; set; }
 
     /// <summary>
@@ -1299,6 +1397,7 @@ public class PropertyInfo
     public List<string> Modifiers { get; set; } = new();
     public bool HasGetter { get; set; }
     public bool HasSetter { get; set; }
+    public List<AttributeInfo> Attributes { get; set; } = new();  // ADD THIS LINE
 
     /// <summary>
     /// Line number where the property declaration starts (1-based)
@@ -1315,7 +1414,6 @@ public class PropertyInfo
     /// </summary>
     public int LineNumberEnd { get; set; }
 }
-
 public class ParameterInfo
 {
     public string Type { get; set; } = string.Empty;
