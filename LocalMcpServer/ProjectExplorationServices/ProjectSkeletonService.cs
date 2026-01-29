@@ -628,32 +628,7 @@ Use this tool to understand project architecture, analyze dependencies, review p
             .Distinct()
             .ToList();
 
-        // Extract classes
-        // ════════════════════════════════════════════════════════════════════════════════════════
-        // 🔧 INTERFACE EXTRACTION PATCH for ProjectSkeletonService.cs
-        // ════════════════════════════════════════════════════════════════════════════════════════
-        // 
-        // PROBLEM: Line 626 in AnalyzeCSharpFileAsync() only extracts ClassDeclarationSyntax.
-        //          This means interface declarations like INuGetSearchService are NEVER indexed.
-        //
-        // SOLUTION: Add InterfaceDeclarationSyntax extraction immediately after class extraction.
-        //
-        // FILE: ProjectExplorationServices/ProjectSkeletonService.cs
-        // REPLACE: Lines 625-878 (entire class extraction block)
-        // ════════════════════════════════════════════════════════════════════════════════════════
-
-        // ✂️ REMOVE OLD CODE (Lines 625-878)
-        // Replace the entire section starting with:
-        //     // Extract classes
-        //     var classDeclarations = root.DescendantNodes()
-        //         .OfType<ClassDeclarationSyntax>();
-        //
-        // WITH THE NEW CODE BELOW:
-
-        // ════════════════════════════════════════════════════════════════════════════════════════
-        // 🆕 EXTRACT BOTH CLASSES AND INTERFACES
-        // ════════════════════════════════════════════════════════════════════════════════════════
-
+      
         // Extract classes
         var classDeclarations = root.DescendantNodes()
             .OfType<ClassDeclarationSyntax>();

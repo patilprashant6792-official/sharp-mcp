@@ -37,7 +37,7 @@ public class MethodFormatterService : IMethodFormatterService
         }
         sb.AppendLine();
 
-        // Individual methods
+        // Individual methods - simplified format matching single method output
         for (int idx = 0; idx < methods.Count; idx++)
         {
             var method = methods[idx];
@@ -46,85 +46,40 @@ public class MethodFormatterService : IMethodFormatterService
             sb.AppendLine($"## Method {idx + 1}: `{method.MethodName}`");
             sb.AppendLine();
 
-            // Metadata table
+            // Compact metadata (just the essentials that differ per method)
             sb.AppendLine("| Property | Value |");
             sb.AppendLine("|----------|-------|");
             sb.AppendLine($"| **Line Number** | {method.LineNumber} |");
             sb.AppendLine($"| **Return Type** | `{method.ReturnType}` |");
             sb.AppendLine($"| **Modifiers** | `{string.Join(" ", method.Modifiers)}` |");
-
-            var characteristics = new List<string>();
-            if (method.IsAsync) characteristics.Add("Async");
-            if (method.IsStatic) characteristics.Add("Static");
-            if (method.IsVirtual) characteristics.Add("Virtual");
-            if (method.IsOverride) characteristics.Add("Override");
-            if (method.IsAbstract) characteristics.Add("Abstract");
-
-            if (characteristics.Any())
-                sb.AppendLine($"| **Characteristics** | {string.Join(", ", characteristics)} |");
-
             sb.AppendLine();
 
-            // XML Documentation (if present)
-            if (!string.IsNullOrWhiteSpace(method.XmlDocumentation))
-            {
-                sb.AppendLine("### Documentation");
-                sb.AppendLine();
-                sb.AppendLine("```xml");
-                sb.AppendLine(method.XmlDocumentation.Trim());
-                sb.AppendLine("```");
-                sb.AppendLine();
-            }
-
-            // Signature
-            sb.AppendLine("### Signature");
+            // Implementation with line numbers
+            sb.AppendLine("## Implementation");
             sb.AppendLine();
             sb.AppendLine("```csharp");
-            sb.AppendLine(method.FullSignature);
-            sb.AppendLine("```");
-            sb.AppendLine();
 
-            // Parameters (if any)
-            if (method.Parameters.Any())
+            if (!string.IsNullOrWhiteSpace(method.FullMethodCode))
             {
-                sb.AppendLine("### Parameters");
-                sb.AppendLine();
-                sb.AppendLine("| Name | Type | Default |");
-                sb.AppendLine("|------|------|---------|");
+                // Split full method code into lines
+                var codeLines = method.FullMethodCode.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.None);
 
-                foreach (var param in method.Parameters)
+                // Calculate starting line: subtract attribute count
+                var attributeLineCount = method.Attributes.Count;
+                var startingLine = method.LineNumber - attributeLineCount;
+
+                var currentLine = startingLine;
+                foreach (var line in codeLines)
                 {
-                    var defaultValue = string.IsNullOrWhiteSpace(param.DefaultValue)
-                        ? "-"
-                        : $"`{param.DefaultValue}`";
-                    sb.AppendLine($"| `{param.Name}` | `{param.Type}` | {defaultValue} |");
+                    sb.AppendLine($"{currentLine,4} | {line}");
+                    currentLine++;
                 }
-                sb.AppendLine();
+            }
+            else
+            {
+                sb.AppendLine($"{method.LineNumber,4} | // Abstract method - no implementation");
             }
 
-            // Attributes (if any)
-            if (method.Attributes.Any())
-            {
-                sb.AppendLine("### Attributes");
-                sb.AppendLine();
-                foreach (var attr in method.Attributes)
-                {
-                    sb.Append($"- `[{attr.Name}");
-                    if (attr.Properties.Any())
-                    {
-                        var props = attr.Properties.Select(kvp => $"{kvp.Key}={kvp.Value}");
-                        sb.Append($"({string.Join(", ", props)})");
-                    }
-                    sb.AppendLine("]`");
-                }
-                sb.AppendLine();
-            }
-
-            // Implementation
-            sb.AppendLine("### Implementation");
-            sb.AppendLine();
-            sb.AppendLine("```csharp");
-            sb.AppendLine(method.FullMethodCode);
             sb.AppendLine("```");
             sb.AppendLine();
         }
@@ -135,11 +90,9 @@ public class MethodFormatterService : IMethodFormatterService
     {
         var md = new StringBuilder();
 
-        // Header
+        // Compact Metadata Section
         md.AppendLine($"# Method: `{methodInfo.MethodName}`");
         md.AppendLine();
-
-        // Metadata table
         md.AppendLine("## Metadata");
         md.AppendLine();
         md.AppendLine("| Property | Value |");
@@ -151,120 +104,38 @@ public class MethodFormatterService : IMethodFormatterService
         md.AppendLine($"| **Line Number** | {methodInfo.LineNumber} |");
         md.AppendLine($"| **Return Type** | `{methodInfo.ReturnType}` |");
         md.AppendLine($"| **Modifiers** | `{string.Join(" ", methodInfo.Modifiers)}` |");
-
-        // Method characteristics
-        var characteristics = new List<string>();
-        if (methodInfo.IsAsync) characteristics.Add("Async");
-        if (methodInfo.IsStatic) characteristics.Add("Static");
-        if (methodInfo.IsVirtual) characteristics.Add("Virtual");
-        if (methodInfo.IsOverride) characteristics.Add("Override");
-        if (methodInfo.IsAbstract) characteristics.Add("Abstract");
-
-        if (characteristics.Any())
-        {
-            md.AppendLine($"| **Characteristics** | {string.Join(", ", characteristics)} |");
-        }
-
         md.AppendLine();
 
-        // XML Documentation (if exists)
-        if (!string.IsNullOrWhiteSpace(methodInfo.XmlDocumentation))
-        {
-            md.AppendLine("## Documentation");
-            md.AppendLine();
-            md.AppendLine("```xml");
-            md.AppendLine(methodInfo.XmlDocumentation.Trim());
-            md.AppendLine("```");
-            md.AppendLine();
-        }
-
-        // Attributes (if any)
-        if (methodInfo.Attributes.Any())
-        {
-            md.AppendLine("## Attributes");
-            md.AppendLine();
-            foreach (var attr in methodInfo.Attributes)
-            {
-                md.AppendLine($"- `[{attr.Name}]`");
-                if (attr.Properties.Any())
-                {
-                    foreach (var prop in attr.Properties)
-                    {
-                        md.AppendLine($"  - `{prop.Key}`: {prop.Value}");
-                    }
-                }
-            }
-            md.AppendLine();
-        }
-
-        // Signature
-        md.AppendLine("## Signature");
-        md.AppendLine();
-        md.AppendLine("```csharp");
-        md.AppendLine(methodInfo.FullSignature);
-        md.AppendLine("```");
-        md.AppendLine();
-
-        // Parameters (if any)
-        if (methodInfo.Parameters.Any())
-        {
-            md.AppendLine("## Parameters");
-            md.AppendLine();
-            md.AppendLine("| Name | Type | Default |");
-            md.AppendLine("|------|------|---------|");
-            foreach (var param in methodInfo.Parameters)
-            {
-                var defaultVal = string.IsNullOrEmpty(param.DefaultValue) ? "-" : $"`{param.DefaultValue}`";
-                md.AppendLine($"| `{param.Name}` | `{param.Type}` | {defaultVal} |");
-            }
-            md.AppendLine();
-        }
-
-        // Method Body with Line Numbers
+        // Implementation with line numbers (includes attributes)
         md.AppendLine("## Implementation");
         md.AppendLine();
+        md.AppendLine("```csharp");
 
-        if (!string.IsNullOrWhiteSpace(methodInfo.MethodBody))
+        if (!string.IsNullOrWhiteSpace(methodInfo.FullMethodCode))
         {
-            md.AppendLine("```csharp");
-
-            // Split method body into lines and add line numbers
-            var bodyLines = methodInfo.MethodBody.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.None);
+            // Split full method code (which includes attributes) into lines
+            var codeLines = methodInfo.FullMethodCode.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.None);
             var currentLine = methodInfo.LineNumber;
 
-            // Add signature line(s)
-            var signatureLines = methodInfo.FullSignature.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.None);
-            foreach (var sigLine in signatureLines)
+            // Adjust starting line if attributes exist (they come before the method)
+            var attributeCount = methodInfo.Attributes.Count;
+            if (attributeCount > 0)
             {
-                md.AppendLine($"{currentLine,4} | {sigLine}");
-                currentLine++;
+                currentLine -= attributeCount;
             }
 
-            // Add body lines
-            foreach (var line in bodyLines)
+            foreach (var line in codeLines)
             {
                 md.AppendLine($"{currentLine,4} | {line}");
                 currentLine++;
             }
-
-            md.AppendLine("```");
         }
         else
         {
-            md.AppendLine("*Abstract method - no implementation*");
+            md.AppendLine("// Abstract method - no implementation");
         }
 
-        md.AppendLine();
-
-        // Full Method Code (collapsed for reference)
-        md.AppendLine("<details>");
-        md.AppendLine("<summary>📋 Full Method Code (Copy-Ready)</summary>");
-        md.AppendLine();
-        md.AppendLine("```csharp");
-        md.AppendLine(methodInfo.FullMethodCode);
         md.AppendLine("```");
-        md.AppendLine();
-        md.AppendLine("</details>");
 
         return md.ToString();
     }
