@@ -2,8 +2,11 @@
 using MCP.Core.Services;
 using Microsoft.AspNetCore.RateLimiting;
 using ModelContextProtocol.Server;
+using NuGet.Configuration;
 using NuGetExplorer.Services;
+using OllamaSharp;
 using StackExchange.Redis;
+using System;
 using System.Threading.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -38,7 +41,7 @@ builder.Services.AddSingleton<IMethodCallGraphService, MethodCallGraphService>()
 builder.Services.AddSingleton<ICodeSearchService, CodeSearchService>();
 builder.Services.AddSingleton<ICodeSearchFormatterService, CodeSearchFormatterService>();
 // Project configuration service (singleton for file access)
-builder.Services.AddSingleton<IProjectConfigService, ProjectConfigService>();
+builder.Services.AddSingleton<IProjectConfigService, RedisProjectConfigService>();
 builder.Services.AddSingleton<INuGetPackageLoader, NuGetPackageLoader>();
 builder.Services.AddSingleton<INuGetPackageExplorer>(sp =>
 {
@@ -46,6 +49,8 @@ builder.Services.AddSingleton<INuGetPackageExplorer>(sp =>
     var logger = sp.GetRequiredService<ILogger<NuGetPackageExplorer>>();
     return new NuGetPackageExplorer(loader, logger);
 });
+
+
 builder.Services.AddSingleton<IConnectionMultiplexer>(sp =>
 {
     var config = builder.Configuration.GetSection("Redis");
@@ -117,6 +122,8 @@ builder.Logging.AddDebug();
 
 var app = builder.Build();
 
+
+
 // Security headers
 app.Use(async (context, next) =>
 {
@@ -140,5 +147,4 @@ app.UseDefaultFiles();
 app.MapControllers();
 app.MapHealthChecks("/health");
 app.MapMcp();
-
 app.Run();

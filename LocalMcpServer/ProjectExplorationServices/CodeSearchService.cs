@@ -1,5 +1,6 @@
 ﻿using MCP.Core.Models;
 using System.Diagnostics;
+using System.Text.RegularExpressions;
 
 namespace MCP.Core.Services;
 
@@ -12,8 +13,8 @@ public class CodeSearchService : ICodeSearchService
         IProjectSkeletonService skeletonService,
         ILogger<CodeSearchService> logger)
     {
-        _skeletonService = skeletonService ?? throw new ArgumentNullException(nameof(skeletonService));
-        _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _skeletonService = skeletonService;
+        _logger = logger;
     }
 
     public async Task<CodeSearchResponse> SearchGloballyAsync(
@@ -144,8 +145,8 @@ public class CodeSearchService : ICodeSearchService
 
     private static bool IsExcludedPath(string path)
     {
-        var excludedFolders = new[] { "bin", "obj", "node_modules", ".vs", ".git", "packages" };
-        return excludedFolders.Any(folder => path.Contains($"{Path.DirectorySeparatorChar}{folder}{Path.DirectorySeparatorChar}"));
+        var excludedDirs = new[] { "bin", "obj", "node_modules", ".git", ".vs" };
+        return excludedDirs.Any(dir => path.Contains(Path.DirectorySeparatorChar + dir + Path.DirectorySeparatorChar));
     }
 
     private List<CodeSearchResult> SearchInAnalysis(CSharpFileAnalysis analysis, CodeSearchRequest request)
@@ -155,53 +156,80 @@ public class CodeSearchService : ICodeSearchService
 
         foreach (var classInfo in analysis.Classes)
         {
-            // Search class names
-            if (ShouldIncludeMemberType(request.MemberType, CodeMemberType.Class) &&
-                classInfo.Name.Contains(request.Query, comparison))
+            // ══════════════════════════════════════════════════════════════════════════════
+            // CLASSES
+            // ══════════════════════════════════════════════════════════════════════════════
+            if (ShouldIncludeMemberType(request.MemberType, CodeMemberType.Class))
             {
-                results.Add(new CodeSearchResult
+                var score = CalculateFuzzyScore(classInfo.Name, request.Query, comparison);
+                if (score > 0)
                 {
-                    Name = classInfo.Name,
-                    MemberType = CodeMemberType.Class,
-                    FilePath = analysis.FilePath,
-                    LineNumber = classInfo.LineNumber,
-                    Modifiers = classInfo.Modifiers,
-                    TypeInfo = BuildClassTypeInfo(classInfo),
-                    RelevanceScore = CalculateRelevance(classInfo.Name, request.Query, CodeMemberType.Class)
-                });
+                    results.Add(new CodeSearchResult
+                    {
+                        Name = classInfo.Name,
+                        MemberType = CodeMemberType.Class,
+                        FilePath = analysis.FilePath,
+                        LineNumber = classInfo.LineNumber,
+                        Modifiers = classInfo.Modifiers,
+                        TypeInfo = BuildClassTypeInfo(classInfo),
+                        RelevanceScore = score,
+                        ParentMember = null
+                    });
+                }
             }
 
-            // Search class-level attributes
-            if (ShouldIncludeMemberType(request.MemberType, CodeMemberType.Attribute) &&
-                classInfo.Attributes != null)
+            // ══════════════════════════════════════════════════════════════════════════════
+            // INTERFACES (NEW - Search in implemented interfaces)
+            // ══════════════════════════════════════════════════════════════════════════════
+            if (ShouldIncludeMemberType(request.MemberType, CodeMemberType.Interface))
             {
-                foreach (var attribute in classInfo.Attributes)
+                foreach (var interfaceName in classInfo.Interfaces)
                 {
-                    var attributeName = ExtractAttributeName(attribute.Name);
-                    if (attributeName.Contains(request.Query, comparison))
+                    var score = CalculateFuzzyScore(interfaceName, request.Query, comparison);
+                    if (score > 0)
                     {
                         results.Add(new CodeSearchResult
                         {
-                            Name = attributeName,
-                            MemberType = CodeMemberType.Attribute,
+                            Name = interfaceName,
+                            MemberType = CodeMemberType.Interface,
                             FilePath = analysis.FilePath,
                             LineNumber = classInfo.LineNumber,
                             ParentClass = classInfo.Name,
-                            ParentMember = null,
-                            Signature = attribute.Name,
+                            TypeInfo = $"Implemented by {classInfo.Name}",
                             Modifiers = new List<string>(),
-                            RelevanceScore = CalculateRelevance(attributeName, request.Query, CodeMemberType.Attribute)
+                            RelevanceScore = score,
+                            ParentMember = null
                         });
                     }
                 }
             }
 
-            // Search methods
+            // ══════════════════════════════════════════════════════════════════════════════
+            // CLASS-LEVEL ATTRIBUTES
+            // ══════════════════════════════════════════════════════════════════════════════
+            if (ShouldIncludeMemberType(request.MemberType, CodeMemberType.Attribute))
+            {
+                SearchAttributes(
+                    results,
+                    classInfo.Attributes,
+                    request.Query,
+                    comparison,
+                    analysis.FilePath,
+                    classInfo.LineNumber,
+                    classInfo.Name,
+                    parentMember: null
+                );
+            }
+
+            // ══════════════════════════════════════════════════════════════════════════════
+            // METHODS
+            // ══════════════════════════════════════════════════════════════════════════════
             if (ShouldIncludeMemberType(request.MemberType, CodeMemberType.Method))
             {
                 foreach (var method in classInfo.Methods)
                 {
-                    if (method.Name.Contains(request.Query, comparison))
+                    var score = CalculateFuzzyScore(method.Name, request.Query, comparison);
+                    if (score > 0)
                     {
                         results.Add(new CodeSearchResult
                         {
@@ -212,43 +240,42 @@ public class CodeSearchService : ICodeSearchService
                             ParentClass = classInfo.Name,
                             Signature = BuildMethodSignature(method),
                             Modifiers = method.Modifiers,
-                            RelevanceScore = CalculateRelevance(method.Name, request.Query, CodeMemberType.Method)
+                            RelevanceScore = score,
+                            ParentMember = null
                         });
-                    }
-
-                    // Search method-level attributes
-                    if (ShouldIncludeMemberType(request.MemberType, CodeMemberType.Attribute) &&
-                        method.Attributes != null)
-                    {
-                        foreach (var attribute in method.Attributes)
-                        {
-                            var attributeName = ExtractAttributeName(attribute.Name);
-                            if (attributeName.Contains(request.Query, comparison))
-                            {
-                                results.Add(new CodeSearchResult
-                                {
-                                    Name = attributeName,
-                                    MemberType = CodeMemberType.Attribute,
-                                    FilePath = analysis.FilePath,
-                                    LineNumber = method.LineNumber,
-                                    ParentClass = classInfo.Name,
-                                    ParentMember = method.Name,
-                                    Signature = attribute.Name,
-                                    Modifiers = new List<string>(),
-                                    RelevanceScore = CalculateRelevance(attributeName, request.Query, CodeMemberType.Attribute)
-                                });
-                            }
-                        }
                     }
                 }
             }
 
-            // Search properties
+            // ══════════════════════════════════════════════════════════════════════════════
+            // METHOD-LEVEL ATTRIBUTES (SEPARATE LOOP - CRITICAL FOR FINDING [HttpPost])
+            // ══════════════════════════════════════════════════════════════════════════════
+            if (ShouldIncludeMemberType(request.MemberType, CodeMemberType.Attribute))
+            {
+                foreach (var method in classInfo.Methods)
+                {
+                    SearchAttributes(
+                        results,
+                        method.Attributes,
+                        request.Query,
+                        comparison,
+                        analysis.FilePath,
+                        method.LineNumber,
+                        classInfo.Name,
+                        parentMember: method.Name
+                    );
+                }
+            }
+
+            // ══════════════════════════════════════════════════════════════════════════════
+            // PROPERTIES
+            // ══════════════════════════════════════════════════════════════════════════════
             if (ShouldIncludeMemberType(request.MemberType, CodeMemberType.Property))
             {
                 foreach (var property in classInfo.Properties)
                 {
-                    if (property.Name.Contains(request.Query, comparison))
+                    var score = CalculateFuzzyScore(property.Name, request.Query, comparison);
+                    if (score > 0)
                     {
                         results.Add(new CodeSearchResult
                         {
@@ -259,43 +286,42 @@ public class CodeSearchService : ICodeSearchService
                             ParentClass = classInfo.Name,
                             TypeInfo = property.Type,
                             Modifiers = property.Modifiers,
-                            RelevanceScore = CalculateRelevance(property.Name, request.Query, CodeMemberType.Property)
+                            RelevanceScore = score,
+                            ParentMember = null
                         });
-                    }
-
-                    // Search property-level attributes
-                    if (ShouldIncludeMemberType(request.MemberType, CodeMemberType.Attribute) &&
-                        property.Attributes != null)
-                    {
-                        foreach (var attribute in property.Attributes)
-                        {
-                            var attributeName = ExtractAttributeName(attribute.Name);
-                            if (attributeName.Contains(request.Query, comparison))
-                            {
-                                results.Add(new CodeSearchResult
-                                {
-                                    Name = attributeName,
-                                    MemberType = CodeMemberType.Attribute,
-                                    FilePath = analysis.FilePath,
-                                    LineNumber = property.LineNumber,
-                                    ParentClass = classInfo.Name,
-                                    ParentMember = property.Name,
-                                    Signature = attribute.Name,
-                                    Modifiers = new List<string>(),
-                                    RelevanceScore = CalculateRelevance(attributeName, request.Query, CodeMemberType.Attribute)
-                                });
-                            }
-                        }
                     }
                 }
             }
 
-            // Search fields
+            // ══════════════════════════════════════════════════════════════════════════════
+            // PROPERTY-LEVEL ATTRIBUTES
+            // ══════════════════════════════════════════════════════════════════════════════
+            if (ShouldIncludeMemberType(request.MemberType, CodeMemberType.Attribute))
+            {
+                foreach (var property in classInfo.Properties)
+                {
+                    SearchAttributes(
+                        results,
+                        property.Attributes,
+                        request.Query,
+                        comparison,
+                        analysis.FilePath,
+                        property.LineNumber,
+                        classInfo.Name,
+                        parentMember: property.Name
+                    );
+                }
+            }
+
+            // ══════════════════════════════════════════════════════════════════════════════
+            // FIELDS
+            // ══════════════════════════════════════════════════════════════════════════════
             if (ShouldIncludeMemberType(request.MemberType, CodeMemberType.Field))
             {
                 foreach (var field in classInfo.Fields)
                 {
-                    if (field.Name.Contains(request.Query, comparison))
+                    var score = CalculateFuzzyScore(field.Name, request.Query, comparison);
+                    if (score > 0)
                     {
                         results.Add(new CodeSearchResult
                         {
@@ -306,34 +332,30 @@ public class CodeSearchService : ICodeSearchService
                             ParentClass = classInfo.Name,
                             TypeInfo = field.Type,
                             Modifiers = field.Modifiers,
-                            RelevanceScore = CalculateRelevance(field.Name, request.Query, CodeMemberType.Field)
+                            RelevanceScore = score,
+                            ParentMember = null
                         });
                     }
+                }
+            }
 
-                    // Search field-level attributes
-                    if (ShouldIncludeMemberType(request.MemberType, CodeMemberType.Attribute) &&
-                        field.Attributes != null)
-                    {
-                        foreach (var attribute in field.Attributes)
-                        {
-                            var attributeName = ExtractAttributeName(attribute.Name);
-                            if (attributeName.Contains(request.Query, comparison))
-                            {
-                                results.Add(new CodeSearchResult
-                                {
-                                    Name = attributeName,
-                                    MemberType = CodeMemberType.Attribute,
-                                    FilePath = analysis.FilePath,
-                                    LineNumber = field.LineNumber,
-                                    ParentClass = classInfo.Name,
-                                    ParentMember = field.Name,
-                                    Signature = attribute.Name,
-                                    Modifiers = new List<string>(),
-                                    RelevanceScore = CalculateRelevance(attributeName, request.Query, CodeMemberType.Attribute)
-                                });
-                            }
-                        }
-                    }
+            // ══════════════════════════════════════════════════════════════════════════════
+            // FIELD-LEVEL ATTRIBUTES
+            // ══════════════════════════════════════════════════════════════════════════════
+            if (ShouldIncludeMemberType(request.MemberType, CodeMemberType.Attribute))
+            {
+                foreach (var field in classInfo.Fields)
+                {
+                    SearchAttributes(
+                        results,
+                        field.Attributes,
+                        request.Query,
+                        comparison,
+                        analysis.FilePath,
+                        field.LineNumber,
+                        classInfo.Name,
+                        parentMember: field.Name
+                    );
                 }
             }
         }
@@ -341,16 +363,170 @@ public class CodeSearchService : ICodeSearchService
         return results;
     }
 
+    /// <summary>
+    /// Searches attributes and adds results with proper parent context
+    /// </summary>
+    private void SearchAttributes(
+        List<CodeSearchResult> results,
+        List<AttributeInfo>? attributes,
+        string query,
+        StringComparison comparison,
+        string filePath,
+        int lineNumber,
+        string parentClass,
+        string? parentMember)
+    {
+        if (attributes == null || attributes.Count == 0)
+            return;
+
+        foreach (var attr in attributes)
+        {
+            var attrName = ExtractAttributeName(attr.Name);
+            var score = CalculateFuzzyScore(attrName, query, comparison);
+
+            if (score > 0)
+            {
+                results.Add(new CodeSearchResult
+                {
+                    Name = attrName,
+                    MemberType = CodeMemberType.Attribute,
+                    FilePath = filePath,
+                    LineNumber = lineNumber,
+                    ParentClass = parentClass,
+                    ParentMember = parentMember, // ✨ Use the model field properly
+                    Signature = parentMember != null ? $"On {parentMember}" : "Class-level",
+                    Modifiers = new List<string>(),
+                    RelevanceScore = score
+                });
+            }
+        }
+    }
+
+    /// <summary>
+    /// Removes "Attribute" suffix for cleaner matching (e.g., "HttpPost" from "HttpPostAttribute")
+    /// </summary>
     private static string ExtractAttributeName(string attributeText)
     {
-        // Examples:
-        // "[HttpPost]" -> "HttpPost"
-        // "[HttpPost("api/users")]" -> "HttpPost"
-        // "[Authorize(Roles = "Admin")]" -> "Authorize"
+        const string suffix = "Attribute";
+        return attributeText.EndsWith(suffix, StringComparison.Ordinal)
+            ? attributeText[..^suffix.Length]
+            : attributeText;
+    }
 
-        var cleaned = attributeText.Trim('[', ']', ' ');
-        var parenIndex = cleaned.IndexOf('(');
-        return parenIndex > 0 ? cleaned[..parenIndex] : cleaned;
+    /// <summary>
+    /// ✨ ENHANCED Visual Studio-style fuzzy scoring with 7-tier ranking:
+    /// 1. Exact match → 1000 pts
+    /// 2. Prefix match → 500 pts  
+    /// 3. Camel case match → 300 pts (PSS matches ProjectSkeletonService)
+    /// 4. Multi-word match → 150 pts 🆕 (search global matches SearchGloballyAsync)
+    /// 5. Word boundary → 200 pts (Skeleton matches ProjectSkeletonService)
+    /// 6. Substring → 100 pts
+    /// 7. Fuzzy (chars in order) → 1-50 pts
+    /// </summary>
+    private double CalculateFuzzyScore(
+        string name,
+        string query,
+        StringComparison comparison)
+    {
+        if (string.IsNullOrEmpty(name) || string.IsNullOrEmpty(query))
+            return 0;
+
+        // 1. Exact match
+        if (name.Equals(query, comparison))
+            return 1000;
+
+        // 2. Prefix match
+        if (name.StartsWith(query, comparison))
+            return 500;
+
+        // 3. Camel case match
+        if (IsCamelCaseMatch(name, query, comparison))
+            return 300;
+
+        // 4. Word boundary match
+        if (IsWordBoundaryMatch(name, query, comparison))
+            return 200;
+
+        // 4.5. 🆕 Multi-word match (split on spaces and match all tokens)
+        if (query.Contains(' '))
+        {
+            var tokens = query.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (tokens.All(token => name.Contains(token, comparison)))
+            {
+                return 150; // Between word boundary (200) and substring (100)
+            }
+        }
+
+        // 5. Substring match
+        if (name.Contains(query, comparison))
+            return 100;
+
+        // 6. Fuzzy match (all chars in order)
+        var fuzzyScore = CalculateFuzzyMatchScore(name, query, comparison);
+        if (fuzzyScore > 0)
+            return fuzzyScore;
+
+        return 0;
+    }
+
+    /// <summary>
+    /// Matches CamelCase patterns: PSS → ProjectSkeletonService
+    /// </summary>
+    private bool IsCamelCaseMatch(
+        string name,
+        string query,
+        StringComparison comparison)
+    {
+        var upperChars = string.Concat(name.Where(char.IsUpper));
+        return upperChars.StartsWith(query, comparison);
+    }
+
+    /// <summary>
+    /// Matches word boundaries: Skeleton → ProjectSkeletonService
+    /// </summary>
+    private bool IsWordBoundaryMatch(
+        string name,
+        string query,
+        StringComparison comparison)
+    {
+        var words = Regex.Split(name, @"(?=[A-Z])").Where(w => !string.IsNullOrEmpty(w));
+        return words.Any(w => w.StartsWith(query, comparison));
+    }
+
+    /// <summary>
+    /// Fuzzy matching: all characters in order with points based on density
+    /// </summary>
+    private double CalculateFuzzyMatchScore(
+        string name,
+        string query,
+        StringComparison comparison)
+    {
+        int nameIdx = 0, queryIdx = 0, matches = 0;
+        int totalDistance = 0;
+        int lastMatchPos = -1;
+
+        while (nameIdx < name.Length && queryIdx < query.Length)
+        {
+            if (name[nameIdx].ToString().Equals(query[queryIdx].ToString(), comparison))
+            {
+                matches++;
+                if (lastMatchPos >= 0)
+                {
+                    totalDistance += nameIdx - lastMatchPos - 1;
+                }
+                lastMatchPos = nameIdx;
+                queryIdx++;
+            }
+            nameIdx++;
+        }
+
+        if (matches != query.Length)
+            return 0;
+
+        // Score based on match density (closer chars = higher score)
+        var avgDistance = matches > 1 ? (double)totalDistance / (matches - 1) : 0;
+        var densityScore = Math.Max(1, 50 - (int)(avgDistance * 5));
+        return densityScore;
     }
 
     private static bool ShouldIncludeMemberType(CodeMemberType filter, CodeMemberType type)
@@ -360,10 +536,10 @@ public class CodeSearchService : ICodeSearchService
     {
         var parts = new List<string>();
         if (!string.IsNullOrEmpty(classInfo.BaseClass))
-            parts.Add($"extends {classInfo.BaseClass}");
+            parts.Add($"Extends: {classInfo.BaseClass}");
         if (classInfo.Interfaces.Any())
-            parts.Add($"implements {string.Join(", ", classInfo.Interfaces)}");
-        return parts.Any() ? string.Join(", ", parts) : "class";
+            parts.Add($"Implements: {string.Join(", ", classInfo.Interfaces)}");
+        return parts.Any() ? string.Join(" | ", parts) : string.Empty;
     }
 
     private static string BuildMethodSignature(MethodInfo method)
@@ -373,25 +549,30 @@ public class CodeSearchService : ICodeSearchService
         return $"{method.ReturnType} {method.Name}({parameters})";
     }
 
-    private static double CalculateRelevance(string name, string query, CodeMemberType type)
+    private static double CalculateRelevance(
+        string name,
+        string query,
+        CodeMemberType type)
     {
-        double score = 0;
+        var score = 0.0;
 
+        // Exact match
         if (name.Equals(query, StringComparison.OrdinalIgnoreCase))
             score += 100;
+        // Starts with query
         else if (name.StartsWith(query, StringComparison.OrdinalIgnoreCase))
-            score += 50;
+            score += 75;
+        // Contains query
         else if (name.Contains(query, StringComparison.OrdinalIgnoreCase))
-            score += 25;
+            score += 50;
 
+        // Boost scores based on member type relevance
         score += type switch
         {
             CodeMemberType.Class => 10,
-            CodeMemberType.Interface => 9,
-            CodeMemberType.Method => 5,
-            CodeMemberType.Property => 3,
-            CodeMemberType.Field => 2,
-            CodeMemberType.Attribute => 4,
+            CodeMemberType.Method => 8,
+            CodeMemberType.Property => 6,
+            CodeMemberType.Field => 4,
             _ => 0
         };
 

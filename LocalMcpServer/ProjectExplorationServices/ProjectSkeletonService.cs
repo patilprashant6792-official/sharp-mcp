@@ -7,7 +7,9 @@ using System.Reflection;
 using System.Reflection.Metadata;
 using System.Text;
 using System.Text.RegularExpressions;
+using Tomlyn.Syntax;
 using static OllamaSharp.OllamaApiClient;
+using SyntaxKind = Microsoft.CodeAnalysis.CSharp.SyntaxKind;
 
 namespace MCP.Core.Services;
 
@@ -627,6 +629,32 @@ Use this tool to understand project architecture, analyze dependencies, review p
             .ToList();
 
         // Extract classes
+        // ════════════════════════════════════════════════════════════════════════════════════════
+        // 🔧 INTERFACE EXTRACTION PATCH for ProjectSkeletonService.cs
+        // ════════════════════════════════════════════════════════════════════════════════════════
+        // 
+        // PROBLEM: Line 626 in AnalyzeCSharpFileAsync() only extracts ClassDeclarationSyntax.
+        //          This means interface declarations like INuGetSearchService are NEVER indexed.
+        //
+        // SOLUTION: Add InterfaceDeclarationSyntax extraction immediately after class extraction.
+        //
+        // FILE: ProjectExplorationServices/ProjectSkeletonService.cs
+        // REPLACE: Lines 625-878 (entire class extraction block)
+        // ════════════════════════════════════════════════════════════════════════════════════════
+
+        // ✂️ REMOVE OLD CODE (Lines 625-878)
+        // Replace the entire section starting with:
+        //     // Extract classes
+        //     var classDeclarations = root.DescendantNodes()
+        //         .OfType<ClassDeclarationSyntax>();
+        //
+        // WITH THE NEW CODE BELOW:
+
+        // ════════════════════════════════════════════════════════════════════════════════════════
+        // 🆕 EXTRACT BOTH CLASSES AND INTERFACES
+        // ════════════════════════════════════════════════════════════════════════════════════════
+
+        // Extract classes
         var classDeclarations = root.DescendantNodes()
             .OfType<ClassDeclarationSyntax>();
 
@@ -880,6 +908,121 @@ Use this tool to understand project architecture, analyze dependencies, review p
 
             result.Classes.Add(classInfo);
         }
+
+        // ════════════════════════════════════════════════════════════════════════════════════════
+        // 🆕 EXTRACT INTERFACES (NEW CODE - ADD THIS AFTER CLASS EXTRACTION)
+        // ════════════════════════════════════════════════════════════════════════════════════════
+
+        var interfaceDeclarations = root.DescendantNodes()
+            .OfType<InterfaceDeclarationSyntax>();
+
+        foreach (var interfaceDecl in interfaceDeclarations)
+        {
+            // Create a ClassInfo for the interface (we're reusing ClassInfo to minimize changes)
+            var interfaceInfo = new ClassInfo
+            {
+                Name = interfaceDecl.Identifier.Text,
+                Modifiers = interfaceDecl.Modifiers.Select(m => m.Text).ToList(),
+                BaseClass = null, // Interfaces don't have base classes
+                Interfaces = interfaceDecl.BaseList?.Types
+                    .Select(t => t.Type.ToString())
+                    .ToList() ?? new List<string>(), // Inherited interfaces
+                LineNumber = tree.GetLineSpan(interfaceDecl.Span).StartLinePosition.Line + 1
+            };
+
+            // Extract interface-level attributes
+            foreach (var attrList in interfaceDecl.AttributeLists)
+            {
+                foreach (var attr in attrList.Attributes)
+                {
+                    var attrInfo = new AttributeInfo
+                    {
+                        Name = attr.Name.ToString()
+                    };
+
+                    if (attr.ArgumentList != null)
+                    {
+                        foreach (var arg in attr.ArgumentList.Arguments)
+                        {
+                            if (arg.NameEquals != null)
+                            {
+                                var key = arg.NameEquals.Name.ToString();
+                                var value = arg.Expression.ToString().Trim('"');
+                                attrInfo.Properties[key] = value;
+                            }
+                            else
+                            {
+                                attrInfo.Properties[$"arg{attrInfo.Properties.Count}"] =
+                                    arg.Expression.ToString().Trim('"');
+                            }
+                        }
+                    }
+
+                    interfaceInfo.Attributes.Add(attrInfo);
+                }
+            }
+
+            // Extract interface methods (all are implicitly public)
+            foreach (var method in interfaceDecl.Members.OfType<MethodDeclarationSyntax>())
+            {
+                var methodSpan = tree.GetLineSpan(method.Span);
+                var methodInfo = new MethodInfo
+                {
+                    Name = method.Identifier.Text,
+                    ReturnType = method.ReturnType.ToString(),
+                    Modifiers = new List<string> { "public" }, // Interfaces are implicitly public
+                    Parameters = method.ParameterList.Parameters
+                        .Select(p => new ParameterInfo
+                        {
+                            Type = p.Type?.ToString() ?? "unknown",
+                            Name = p.Identifier.Text,
+                            DefaultValue = p.Default?.Value.ToString()
+                        })
+                        .ToList(),
+                    LineNumber = methodSpan.StartLinePosition.Line + 1,
+                    LineNumberStart = methodSpan.StartLinePosition.Line + 1,
+                    LineNumberEnd = methodSpan.EndLinePosition.Line + 1
+                };
+
+                // Extract XML documentation
+                var trivia = method.GetLeadingTrivia()
+                    .FirstOrDefault(t => t.IsKind(SyntaxKind.SingleLineDocumentationCommentTrivia));
+
+                if (trivia != default)
+                {
+                    methodInfo.XmlDocumentation = trivia.ToString();
+                }
+
+                interfaceInfo.Methods.Add(methodInfo);
+            }
+
+            // Extract interface properties (all are implicitly public)
+            foreach (var property in interfaceDecl.Members.OfType<PropertyDeclarationSyntax>())
+            {
+                var propertySpan = tree.GetLineSpan(property.Span);
+                var propInfo = new PropertyInfo
+                {
+                    Name = property.Identifier.Text,
+                    Type = property.Type.ToString(),
+                    Modifiers = new List<string> { "public" }, // Interfaces are implicitly public
+                    HasGetter = property.AccessorList?.Accessors.Any(a => a.IsKind(SyntaxKind.GetAccessorDeclaration)) ?? false,
+                    HasSetter = property.AccessorList?.Accessors.Any(a => a.IsKind(SyntaxKind.SetAccessorDeclaration)) ?? false,
+                    LineNumber = propertySpan.StartLinePosition.Line + 1,
+                    LineNumberStart = propertySpan.StartLinePosition.Line + 1,
+                    LineNumberEnd = propertySpan.EndLinePosition.Line + 1
+                };
+
+                interfaceInfo.Properties.Add(propInfo);
+            }
+
+            // Add to results - interfaces are stored in the same Classes list
+            // (Consider renaming Classes to TypeDeclarations in the future for clarity)
+            result.Classes.Add(interfaceInfo);
+        }
+
+        // ════════════════════════════════════════════════════════════════════════════════════════
+        // Continue with the return statement (no changes needed after this)
+        // ════════════════════════════════════════════════════════════════════════════════════════
 
         return result;
     }
