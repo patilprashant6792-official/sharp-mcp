@@ -14,10 +14,6 @@
 	<!-- SDK already handles wwwroot files with Microsoft.NET.Sdk.Web -->
 
 	<ItemGroup>
-		<Content Remove="Configuration\category-mapping.json" />
-	</ItemGroup>
-
-	<ItemGroup>
 		<PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="5.0.0" />
 		<PackageReference Include="ModelContextProtocol" Version="0.5.0-preview.1" />
 		<PackageReference Include="ModelContextProtocol.AspNetCore" Version="0.5.0-preview.1" />

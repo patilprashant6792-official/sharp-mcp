@@ -1,4 +1,6 @@
-﻿using MCP.Core.Configuration;
+﻿using MCP.Core.BackgroundServices;
+using MCP.Core.Configuration;
+using MCP.Core.FileUpdateService;
 using MCP.Core.Middlewares;
 using MCP.Core.Services;
 using Microsoft.AspNetCore.RateLimiting;
@@ -25,21 +27,29 @@ builder.Services.AddMemoryCache();
 
 // Register NuGetService as singleton (thread-safe with semaphore)
 builder.Services.AddSingleton<INuGetSearchService, NuGetSearchService>();
-builder.Services.AddSingleton<IProjectSkeletonService>(sp =>
+
+builder.Services.AddSingleton(sp =>
 {
     var config = sp.GetRequiredService<IConfiguration>();
     var projectConfigService = sp.GetRequiredService<IProjectConfigService>();
     return new ProjectSkeletonService(config, projectConfigService);
 });
+builder.Services.AddSingleton<IProjectSkeletonService, CachedProjectSkeletonService>();
+
 builder.Services.AddSingleton<ITomlSerializerService, TomlSerializerService>();
 builder.Services.AddSingleton<IMarkdownFormatterService, MarkdownFormatterService>();
 
+builder.Services.Configure<AnalysisCacheConfig>(
+    builder.Configuration.GetSection(AnalysisCacheConfig.SectionName));
 
 builder.Services.AddSingleton<IMethodFormatterService, MethodFormatterService>();
 
 builder.Services.AddSingleton<IMethodCallGraphService, MethodCallGraphService>();
 
-builder.Services.AddSingleton<ICodeSearchService, CodeSearchService>();
+
+builder.Services.AddSingleton<CodeSearchService>();                      // concrete — used as fallback
+builder.Services.AddSingleton<IAnalysisCacheService, RedisAnalysisCacheService>();
+builder.Services.AddSingleton<ICodeSearchService, CachedCodeSearchService>();
 builder.Services.AddSingleton<ICodeSearchFormatterService, CodeSearchFormatterService>();
 // Project configuration service (singleton for file access)
 builder.Services.AddSingleton<IProjectConfigService, RedisProjectConfigService>();
@@ -106,6 +116,10 @@ builder.Services.AddSingleton<IConnectionMultiplexer>(sp =>
     }
 });
 
+builder.Services.AddHostedService<CSharpAnalysisBackgroundService>();
+builder.Services.AddSingleton<IFileWatcherRegistry, CSharpFileWatcherService>();
+builder.Services.AddHostedService(sp =>
+    (CSharpFileWatcherService)sp.GetRequiredService<IFileWatcherRegistry>());
 
 
 // Replace MemoryPackageMetadataCache with Redis
