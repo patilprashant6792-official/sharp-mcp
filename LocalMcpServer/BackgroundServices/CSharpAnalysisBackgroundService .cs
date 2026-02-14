@@ -122,7 +122,7 @@ public class CSharpAnalysisBackgroundService : BackgroundService
         // check via a zero-timeout task — simplest is to cast to the concrete type.
         // To keep the interface clean we expose a sync TryRead on the implementation.
         if (_trigger is AnalysisTriggerService concrete)
-            return concrete.TryRead(out name);
+            return concrete.read(out name);
 
         name = null;
         return false;

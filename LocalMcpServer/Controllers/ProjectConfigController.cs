@@ -130,10 +130,10 @@ public class ProjectConfigController : ControllerBase
 
                 if (nameChanged || pathChanged)
                 {
-                    // Purge stale Redis keys under old project name
                     await _cache.PurgeProjectAsync(existing.Name);
 
-                    // Stop watcher on old registration, start on new
+                    // Stop watcher on old registration,
+                    // start on new
                     _watcher.UnregisterProject(existing.Name);
                     _watcher.RegisterProject(project.Name, project.Path);
 

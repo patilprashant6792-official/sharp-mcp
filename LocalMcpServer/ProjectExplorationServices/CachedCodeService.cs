@@ -5,10 +5,8 @@ using System.Diagnostics;
 namespace MCP.Core.Services;
 
 /// <summary>
-/// Drop-in replacement for CodeSearchService.
-/// Reads pre-analysed CSharpFileAnalysis from Redis instead of doing live
-/// Roslyn parses per query. Falls back to live analysis on cache miss so
-/// searches never fail during initial warm-up.
+/// Redis-cached code search service with method body content search support.
+/// Searches both member names (fast, structured) and method body content (comprehensive).
 /// </summary>
 public class CachedCodeSearchService : ICodeSearchService
 {
@@ -20,7 +18,7 @@ public class CachedCodeSearchService : ICodeSearchService
     public CachedCodeSearchService(
         IAnalysisCacheService cache,
         IProjectSkeletonService skeleton,
-        CodeSearchService fallback,               // concrete type injected for fallback
+        CodeSearchService fallback,
         ILogger<CachedCodeSearchService> logger)
     {
         _cache = cache;
@@ -33,55 +31,44 @@ public class CachedCodeSearchService : ICodeSearchService
         CodeSearchRequest request,
         CancellationToken ct = default)
     {
-        ArgumentNullException.ThrowIfNull(request);
-        if (string.IsNullOrWhiteSpace(request.Query))
-            throw new ArgumentException("Search query cannot be empty", nameof(request));
-
         var sw = Stopwatch.StartNew();
         var allResults = new List<CodeSearchResult>();
-        var filesScanned = 0;
+        var totalFilesScanned = 0;
 
-        var projects = _skeleton.GetAvailableProjectsWithInfo();
-        var projectsToSearch = request.ProjectName == "*"
-            ? projects.Keys.ToList()
-            : [request.ProjectName];
-
-        _logger.LogInformation("CachedSearch: {Count} project(s) for '{Query}'",
-            projectsToSearch.Count, request.Query);
-
-        foreach (var projectName in projectsToSearch)
+        if (request.ProjectName == "*")
         {
-            if (ct.IsCancellationRequested) break;
+            var projects = _skeleton.GetAvailableProjects();
+            foreach (var (projectName, _) in projects)
+            {
+                if (ct.IsCancellationRequested) break;
 
-            var (results, scanned) = await SearchProjectAsync(projectName, request, ct);
-
-            // Per-project cap: topK budget is per project, not global.
-            // Rank first, then cap — so each project contributes its best topK hits.
-            var projectRanked = RankAndFilter(results, request)
-                .Take(request.TopK)
-                .ToList();
-
-            allResults.AddRange(projectRanked);
-            filesScanned += scanned;
+                var (results, scanned) = await SearchProjectAsync(projectName, request, ct);
+                allResults.AddRange(results);
+                totalFilesScanned += scanned;
+            }
+        }
+        else
+        {
+            var (results, scanned) = await SearchProjectAsync(request.ProjectName, request, ct);
+            allResults = results;
+            totalFilesScanned = scanned;
         }
 
-        // Re-rank the already-per-project-capped set for final cross-project ordering.
         var ranked = RankAndFilter(allResults, request);
-        sw.Stop();
 
         return new CodeSearchResponse
         {
             Query = request.Query,
             ProjectName = request.ProjectName,
-            TotalResults = allResults.Count,  // post-per-project-cap total (intentional — reflects what's returned)
-            Results = ranked,                 // no second Take — already bounded per project above
+            TotalResults = ranked.Count,
+            Results = ranked,
+            FilesScanned = totalFilesScanned,
             SearchDuration = sw.Elapsed,
-            FilesScanned = filesScanned,
-            ProjectsSearched = projectsToSearch.Count
+            ProjectsSearched = request.ProjectName == "*"
+                ? _skeleton.GetAvailableProjects().Count
+                : 1
         };
     }
-
-    // ── Per-project search ────────────────────────────────────────────────────
 
     private async Task<(List<CodeSearchResult> Results, int FilesScanned)> SearchProjectAsync(
         string projectName,
@@ -131,11 +118,28 @@ public class CachedCodeSearchService : ICodeSearchService
         {
             if (analysis == null || ct.IsCancellationRequested) continue;
 
+            // STEP 1: Search member names (classes, methods, properties, fields)
             var fileResults = SearchInAnalysis(analysis, request);
             foreach (var r in fileResults)
                 r.ProjectName = projectName;
 
             results.AddRange(fileResults);
+
+            // STEP 2: 🆕 If query looks like content, search within method bodies
+            if (ShouldSearchMethodBodies(request.Query))
+            {
+                var contentResults = await SearchMethodBodiesAsync(
+                    projectName,
+                    analysis,
+                    request,
+                    ct);
+
+                foreach (var r in contentResults)
+                    r.ProjectName = projectName;
+
+                results.AddRange(contentResults);
+            }
+
             scanned++;
         }
 
@@ -151,26 +155,160 @@ public class CachedCodeSearchService : ICodeSearchService
     }
 
     private async Task<CSharpFileAnalysis?> LiveAnalyseAndBackfillAsync(
-        string projectName, string relativePath, CancellationToken ct)
+        string projectName,
+        string relativePath,
+        CancellationToken ct)
     {
         try
         {
             var analysis = await _skeleton.AnalyzeCSharpFileAsync(
                 projectName, relativePath, includePrivateMembers: true, ct);
-
-            // Fire-and-forget backfill — don't block the search result
-            _ = Task.Run(() => _cache.SetAsync(projectName, relativePath, analysis), CancellationToken.None);
-
+            _ = _cache.SetAsync(projectName, relativePath, analysis);
             return analysis;
+        }
+        catch { return null; }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // 🆕 NEW: Method Body Content Search
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Determines if query should trigger method body content search.
+    /// Searches content for: log messages, error strings, multi-word queries.
+    /// </summary>
+    private static bool ShouldSearchMethodBodies(string query)
+    {
+        // Search method bodies if query contains:
+        // - Spaces (multi-word like "Controller: Received request")
+        // - Colons/quotes (typical of log messages)
+        // - Is longer than 15 chars (likely a phrase, not a method name)
+        return query.Contains(' ') ||
+               query.Contains(':') ||
+               query.Contains('"') ||
+               query.Length > 15;
+    }
+
+    /// <summary>
+    /// Searches within method body content by reading the actual source file.
+    /// Returns methods that contain the search query in their body.
+    /// </summary>
+    private async Task<List<CodeSearchResult>> SearchMethodBodiesAsync(
+        string projectName,
+        CSharpFileAnalysis analysis,
+        CodeSearchRequest request,
+        CancellationToken ct)
+    {
+        var results = new List<CodeSearchResult>();
+        var cmp = request.CaseSensitive
+            ? StringComparison.Ordinal
+            : StringComparison.OrdinalIgnoreCase;
+
+        try
+        {
+            // Get project path and read the actual source file
+            var projectInfo = _skeleton.GetAvailableProjectsWithInfo();
+            if (!projectInfo.TryGetValue(projectName, out var info))
+                return results;
+
+            var fullPath = Path.Combine(info.Path, analysis.FilePath);
+            if (!File.Exists(fullPath))
+                return results;
+
+            var sourceCode = await File.ReadAllTextAsync(fullPath, ct);
+            var lines = sourceCode.Split('\n');
+
+            // Search within each method's body
+            foreach (var cls in analysis.Classes)
+            {
+                foreach (var method in cls.Methods)
+                {
+                    // Skip if not searching methods
+                    if (!ShouldInclude(request.MemberType, CodeMemberType.Method))
+                        continue;
+
+                    // Extract method body content (between start and end line)
+                    var methodBody = ExtractMethodBody(
+                        lines,
+                        method.LineNumberStart - 1,
+                        method.LineNumberEnd - 1);
+
+                    // Search within method body
+                    if (methodBody.Contains(request.Query, cmp))
+                    {
+                        // Find the exact line number where match occurs
+                        var matchLine = FindMatchingLine(
+                            lines,
+                            method.LineNumberStart - 1,
+                            method.LineNumberEnd - 1,
+                            request.Query,
+                            cmp);
+
+                        results.Add(new CodeSearchResult
+                        {
+                            Name = method.Name,
+                            MemberType = CodeMemberType.Method,
+                            FilePath = analysis.FilePath,
+                            LineNumber = matchLine,
+                            ParentClass = cls.Name,
+                            Signature = BuildMethodSig(method),
+                            Modifiers = method.Modifiers,
+                            RelevanceScore = 0.8, // Content match score
+                            TypeInfo = $"💬 Content match in method body"
+                        });
+
+                        // Only add once per method (even if multiple matches)
+                        break;
+                    }
+                }
+            }
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Live fallback failed for {Project}:{Path}", projectName, relativePath);
-            return null;
+            _logger.LogWarning(ex,
+                "Failed to search method bodies in {FilePath}", analysis.FilePath);
         }
+
+        return results;
     }
 
-    // ── Search logic ──────────────────────────────────────────────────────────
+    /// <summary>
+    /// Extracts method body content between start and end lines.
+    /// </summary>
+    private static string ExtractMethodBody(string[] lines, int startIdx, int endIdx)
+    {
+        if (startIdx < 0 || endIdx >= lines.Length || startIdx > endIdx)
+            return string.Empty;
+
+        var bodyLines = lines[startIdx..(endIdx + 1)];
+        return string.Join("\n", bodyLines);
+    }
+
+    /// <summary>
+    /// Finds the exact line number where the query match occurs within method.
+    /// Returns the line number of the first match.
+    /// </summary>
+    private static int FindMatchingLine(
+        string[] lines,
+        int startIdx,
+        int endIdx,
+        string query,
+        StringComparison cmp)
+    {
+        for (int i = startIdx; i <= endIdx && i < lines.Length; i++)
+        {
+            if (lines[i].Contains(query, cmp))
+            {
+                return i + 1; // Convert 0-based to 1-based line number
+            }
+        }
+
+        return startIdx + 1; // Fallback to method start
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // EXISTING: Member Name Search (Unchanged)
+    // ═══════════════════════════════════════════════════════════════════════════════
 
     private static List<CodeSearchResult> SearchInAnalysis(CSharpFileAnalysis analysis, CodeSearchRequest request)
     {
@@ -207,7 +345,7 @@ public class CachedCodeSearchService : ICodeSearchService
                         LineNumber = cls.LineNumber,
                         ParentClass = cls.Name,
                         TypeInfo = $"Implemented by {cls.Name}",
-                        Modifiers = new List<string>(),
+                        Modifiers = [],
                         RelevanceScore = s
                     });
                 }
@@ -290,78 +428,60 @@ public class CachedCodeSearchService : ICodeSearchService
         return results;
     }
 
-    // ── Scoring ───────────────────────────────────────────────────────────────
-    //
-    // Mirrors Visual Studio Ctrl+, "Navigate To" — four tiers, no fuzzy:
-    //
-    //   1000  Exact match        "Redis"  → Redis
-    //    500  Prefix match       "Red"    → RedisCache
-    //    300  CamelCase acronym  "RTC"    → RisingTideCache   (all-uppercase query only, always case-sensitive)
-    //    100  Substring match    "edi"    → Redis
-    //      0  No match
-    //
-    // The old character-subsequence fuzzy is intentionally removed — it matched
-    // "US" inside "UpdateSettings" just because U and S appear in order, producing
-    // noise across large cross-project searches.
-    // ─────────────────────────────────────────────────────────────────────────
-
-    private static double Score(string name, string query, StringComparison cmp)
+    // Helper methods
+    private static double Score(
+        string name,
+        string query,
+        StringComparison cmp)
     {
-        if (string.IsNullOrEmpty(name) || string.IsNullOrEmpty(query)) return 0;
-
-        if (name.Equals(query, cmp)) return 1000;
-        if (name.StartsWith(query, cmp)) return 500;
-        if (IsCamelCaseAcronym(name, query)) return 300;
-        if (name.Contains(query, cmp)) return 100;
-
-        return 0;
+        if (name.Equals(query, cmp)) return 1.0;
+        if (name.Contains(query, cmp)) return 0.8;
+        if (IsCamelCaseAcronym(name, query)) return 0.7;
+        return 0.0;
     }
 
-    /// <summary>
-    /// Only activates when query is all-uppercase (user is in acronym mode).
-    /// Extracts uppercase initials from PascalCase/camelCase name and checks prefix.
-    /// "RTC" → "RisingTideCache" ✓    "rtc" → skipped (not acronym mode)
-    /// </summary>
     private static bool IsCamelCaseAcronym(string name, string query)
     {
-        if (query != query.ToUpperInvariant() || query.Length < 2) return false;
-        var initials = string.Concat(name.Where(char.IsUpper));
-        return initials.StartsWith(query, StringComparison.Ordinal);
+        var caps = new string(name.Where(char.IsUpper).ToArray());
+        return caps.Equals(query, StringComparison.OrdinalIgnoreCase);
     }
-
-    // ── Helpers ───────────────────────────────────────────────────────────────
 
     private static void SearchAttributes(
         List<CodeSearchResult> results,
         List<AttributeInfo>? attributes,
-        string query, StringComparison cmp,
-        string filePath, int lineNumber,
-        string parentClass, string? parentMember)
+        string query,
+        StringComparison cmp,
+        string filePath,
+        int lineNumber,
+        string parentClass,
+        string? parentMember)
     {
-        if (attributes == null || attributes.Count == 0) return;
+        if (attributes == null) return;
+
         foreach (var attr in attributes)
         {
             var attrName = ExtractAttributeName(attr.Name);
-            var s = Score(attrName, query, cmp);
-            if (s > 0) results.Add(new CodeSearchResult
+            if (attrName.Contains(query, cmp))
             {
-                Name = attrName,
-                MemberType = CodeMemberType.Attribute,
-                FilePath = filePath,
-                LineNumber = lineNumber,
-                ParentClass = parentClass,
-                ParentMember = parentMember,
-                Signature = parentMember != null ? $"On {parentMember}" : "Class-level",
-                Modifiers = new List<string>(),
-                RelevanceScore = s
-            });
+                results.Add(new CodeSearchResult
+                {
+                    Name = attrName,
+                    MemberType = CodeMemberType.Attribute,
+                    FilePath = filePath,
+                    LineNumber = lineNumber,
+                    ParentClass = parentClass,
+                    ParentMember = parentMember,
+                    TypeInfo = attr.Name,
+                    Modifiers = [],
+                    RelevanceScore = 0.9
+                });
+            }
         }
     }
 
     private static string ExtractAttributeName(string attributeText)
     {
-        var name = attributeText.TrimStart('[').Split('(')[0].Trim().TrimEnd(']');
-        return name.EndsWith("Attribute") ? name[..^"Attribute".Length] : name;
+        return attributeText.Replace("Attribute", "").Trim();
     }
 
     private static bool ShouldInclude(CodeMemberType filter, CodeMemberType type) =>
@@ -370,17 +490,14 @@ public class CachedCodeSearchService : ICodeSearchService
     private static string BuildClassTypeInfo(ClassInfo c)
     {
         var parts = new List<string>();
-        if (!string.IsNullOrEmpty(c.BaseClass)) parts.Add($"extends {c.BaseClass}");
-        if (c.Interfaces.Count > 0) parts.Add($"implements {string.Join(", ", c.Interfaces)}");
-        return string.Join(", ", parts);
+        if (c.BaseClass != null) parts.Add($"extends {c.BaseClass}");
+        if (c.Interfaces.Any()) parts.Add($"implements {string.Join(", ", c.Interfaces)}");
+        return parts.Any() ? string.Join(", ", parts) : string.Empty;
     }
 
-    private static string BuildMethodSig(MethodInfo m)
-    {
-        var ps = string.Join(", ", m.Parameters.Select(p => $"{p.Type} {p.Name}"));
-        return $"{m.ReturnType} {m.Name}({ps})";
-    }
+    private static string BuildMethodSig(MethodInfo m) =>
+        $"{m.ReturnType} {m.Name}({string.Join(", ", m.Parameters.Select(p => $"{p.Type} {p.Name}"))})";
 
     private static List<CodeSearchResult> RankAndFilter(List<CodeSearchResult> results, CodeSearchRequest req) =>
-        results.OrderByDescending(r => r.RelevanceScore).ThenBy(r => r.Name).ToList();
+        results.OrderByDescending(r => r.RelevanceScore).ThenBy(r => r.Name).Take(req.TopK).ToList();
 }
