@@ -290,7 +290,7 @@ public class CodeAnalysisTools
         try
         {
             var result = await _projectSkeletonService.ReadFileContentAsync(projectName, relativeFilePath);
-            return _tomlSerializer.Serialize(result);
+            return result.RawContent; // ✅ Just return the content directly
         }
         catch (FileAccessDeniedException ex)
         {
