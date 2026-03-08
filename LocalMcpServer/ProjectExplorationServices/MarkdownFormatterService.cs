@@ -1,5 +1,4 @@
 ﻿using MCP.Core.Models;
-using OllamaSharp.Models;
 using System.Text;
 
 namespace MCP.Core.Services;

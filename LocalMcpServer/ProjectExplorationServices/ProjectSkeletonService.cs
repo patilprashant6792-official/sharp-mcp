@@ -9,7 +9,6 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
 using Tomlyn.Syntax;
-using static OllamaSharp.OllamaApiClient;
 using SyntaxKind = Microsoft.CodeAnalysis.CSharp.SyntaxKind;
 
 namespace MCP.Core.Services;

@@ -7,7 +7,6 @@ using Microsoft.AspNetCore.RateLimiting;
 using ModelContextProtocol.Server;
 using NuGet.Configuration;
 using NuGetExplorer.Services;
-using OllamaSharp;
 using StackExchange.Redis;
 using System;
 using System.Threading.RateLimiting;

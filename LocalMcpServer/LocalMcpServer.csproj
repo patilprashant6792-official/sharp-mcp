@@ -23,8 +23,6 @@
 		<PackageReference Include="NuGet.Packaging" Version="7.0.1" />
 		<PackageReference Include="NuGet.Protocol" Version="7.0.1" />
 		<PackageReference Include="NuGet.Versioning" Version="7.0.1" />
-		<PackageReference Include="OllamaSharp" Version="5.4.12" />
-		<PackageReference Include="OpenAI" Version="2.8.0" />
 		<PackageReference Include="StackExchange.Redis" Version="2.10.1" />
 		<PackageReference Include="System.Reflection.MetadataLoadContext" Version="10.0.1" />
 		<PackageReference Include="Tomlyn" Version="0.19.0" />

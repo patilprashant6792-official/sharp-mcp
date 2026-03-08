@@ -78,29 +78,28 @@ public class CodeAnalysisTools
 
     [McpServerTool]
     [Description("PREFERRED METHOD: Analyzes C# file(s) and returns structured metadata WITHOUT loading full content. " +
-        "Returns: namespace, using directives, classes, methods, properties, fields, attributes, constructor dependencies, file classification. " +
-        "BATCH MODE: Pass 'File1.cs,File2.cs,File3.cs' (comma-separated, NO SPACES) to analyze multiple files efficiently (saves ~300 tokens per additional file). " +
-        "Use this BEFORE fetch_method_implementation to understand structure. " +
-        "TOKEN-EFFICIENT: Always prioritise this if its a class based c# file, else use read File Content,Set includePrivateMembers=true when:"+
-        " - Debugging internal implementation details\r\n  - Analyzing dependency injection patterns\r\n  - Refactoring private methods\r\n  - Understanding full class architecture\r\nDefault: false (public API surface only)")]
+    "Returns: namespace, using directives, classes, methods, properties, fields, attributes, constructor dependencies, file classification. " +
+    "BATCH MODE: Pass 'File1.cs,File2.cs,File3.cs' (comma-separated, NO SPACES) to analyze multiple files efficiently (saves ~300 tokens per additional file). " +
+    "Use this BEFORE fetch_method_implementation to understand structure. " +
+    "TOKEN-EFFICIENT: Always prioritise this if its a class based c# file, else use read File Content,Set includePrivateMembers=true when:" +
+    " - Debugging internal implementation details\r\n  - Analyzing dependency injection patterns\r\n  - Refactoring private methods\r\n  - Understanding full class architecture\r\nDefault: false (public API surface only)")]
     public async Task<string> AnalyzeCSharpFile(
-        [Description("Required: Project name")]
-        string projectName,
-        [Description("Required: Relative path(s) to C# file from project root. " +
-            "Single: 'Services/UserService.cs' | " +
-            "Batch: 'Services/UserService.cs,Controllers/UserController.cs,Repositories/UserRepository.cs' (NO SPACES)")]
-        string relativeFilePath,
-        [Description("Optional: Include private members (default: false, public only)")]
-        bool includePrivateMembers = false)
+    [Description("Required: Project name")]
+    string projectName,
+    [Description("Required: Relative path(s) to C# file from project root. " +
+        "Single: 'Services/UserService.cs' | " +
+        "Batch: 'Services/UserService.cs,Controllers/UserController.cs,Repositories/UserRepository.cs' (NO SPACES)")]
+    string relativeFilePath,
+    [Description("Optional: Include private members (default: false, public only)")]
+    bool includePrivateMembers = false)
     {
         try
         {
-            // Split paths for batch mode
             var filePaths = relativeFilePath
                 .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                 .ToArray();
 
-            // Single file mode
+            // Single file — no overhead of Task.WhenAll
             if (filePaths.Length == 1)
             {
                 var analysis = await _projectSkeletonService.AnalyzeCSharpFileAsync(
@@ -110,11 +109,8 @@ public class CodeAnalysisTools
                 return _markdownFormatter.FormatCSharpAnalysis(analysis);
             }
 
-            // Batch mode
-            var analyses = new List<CSharpFileAnalysis>();
-            var errors = new List<string>();
-
-            foreach (var path in filePaths)
+            // Batch mode — all cache/Redis reads fire concurrently
+            var fetchTasks = filePaths.Select(async path =>
             {
                 try
                 {
@@ -122,18 +118,28 @@ public class CodeAnalysisTools
                         projectName,
                         path,
                         includePrivateMembers);
-                    analyses.Add(analysis);
+                    return (Analysis: analysis, Error: (string?)null);
                 }
                 catch (FileNotFoundException)
                 {
-                    errors.Add($"File not found: {path}");
+                    return (Analysis: (CSharpFileAnalysis?)null, Error: $"File not found: {path}");
                 }
-            }
+            });
+
+            var results = await Task.WhenAll(fetchTasks);
+
+            var analyses = results
+                .Where(r => r.Analysis != null)
+                .Select(r => r.Analysis!)
+                .ToList();
+
+            var errors = results
+                .Where(r => r.Error != null)
+                .Select(r => r.Error!)
+                .ToList();
 
             if (analyses.Count == 0)
-            {
                 throw new ArgumentException($"No valid files found.\n\nErrors:\n{string.Join("\n", errors)}");
-            }
 
             // Format batch results
             var sb = new StringBuilder();
@@ -142,52 +148,39 @@ public class CodeAnalysisTools
             sb.AppendLine($"**Project:** {analyses[0].ProjectName}");
             sb.AppendLine();
 
-            // Add errors if any
             if (errors.Count > 0)
             {
                 sb.AppendLine("⚠️ **Warnings:**");
                 foreach (var error in errors)
-                {
                     sb.AppendLine($"- {error}");
-                }
                 sb.AppendLine();
             }
 
-            // Table of contents
             sb.AppendLine("## Files Index");
             sb.AppendLine();
             for (int i = 0; i < analyses.Count; i++)
             {
-                var analysis = analyses[i];
-                var classCount = analysis.Classes.Count;
-                var methodCount = analysis.Classes.Sum(c => c.Methods.Count);
-                sb.AppendLine($"{i + 1}. **{analysis.FileName}** → {classCount} class{(classCount != 1 ? "es" : "")}, {methodCount} method{(methodCount != 1 ? "s" : "")}");
+                var a = analyses[i];
+                var classCount = a.Classes.Count;
+                var methodCount = a.Classes.Sum(c => c.Methods.Count);
+                sb.AppendLine($"{i + 1}. **{a.FileName}** → {classCount} class{(classCount != 1 ? "es" : "")}, {methodCount} method{(methodCount != 1 ? "s" : "")}");
             }
             sb.AppendLine();
             sb.AppendLine("---");
             sb.AppendLine();
 
-            // Format each file
             for (int i = 0; i < analyses.Count; i++)
             {
-                var analysis = analyses[i];
-                sb.AppendLine($"## File {i + 1}: `{analysis.FileName}`");
+                sb.AppendLine($"## File {i + 1}: `{analyses[i].FileName}`");
                 sb.AppendLine();
 
-                // Use existing formatter for individual file
-                var formatted = _markdownFormatter.FormatCSharpAnalysis(analysis);
+                var formatted = _markdownFormatter.FormatCSharpAnalysis(analyses[i]);
 
-                // Remove the header from individual format (avoid duplicate)
                 var lines = formatted.Split('\n');
                 var contentStart = Array.FindIndex(lines, l => l.StartsWith("**Project:**"));
-                if (contentStart > 0)
-                {
-                    sb.AppendLine(string.Join("\n", lines.Skip(contentStart)));
-                }
-                else
-                {
-                    sb.AppendLine(formatted);
-                }
+                sb.AppendLine(contentStart > 0
+                    ? string.Join("\n", lines.Skip(contentStart))
+                    : formatted);
 
                 if (i < analyses.Count - 1)
                 {
@@ -205,8 +198,7 @@ public class CodeAnalysisTools
             var projectList = string.Join("\n", availableProjects.Select(p =>
                 $"• {p.Key} - {p.Value.Description}"));
             throw new ArgumentException(
-                $"Project '{projectName}' not found.\n\n" +
-                $"Available projects:\n{projectList}");
+                $"Project '{projectName}' not found.\n\nAvailable projects:\n{projectList}");
         }
         catch (FileNotFoundException ex)
         {

@@ -27,25 +27,32 @@ public class CachedCodeSearchService : ICodeSearchService
         _logger = logger;
     }
 
+    // Lines 30-71 in ProjectExplorationServices/CachedCodeService.cs
+    // Replace the entire SearchGloballyAsync method
+
     public async Task<CodeSearchResponse> SearchGloballyAsync(
         CodeSearchRequest request,
         CancellationToken ct = default)
     {
         var sw = Stopwatch.StartNew();
-        var allResults = new List<CodeSearchResult>();
-        var totalFilesScanned = 0;
+
+        List<CodeSearchResult> allResults;
+        int totalFilesScanned;
 
         if (request.ProjectName == "*")
         {
             var projects = _skeleton.GetAvailableProjects();
-            foreach (var (projectName, _) in projects)
-            {
-                if (ct.IsCancellationRequested) break;
 
-                var (results, scanned) = await SearchProjectAsync(projectName, request, ct);
-                allResults.AddRange(results);
-                totalFilesScanned += scanned;
-            }
+            var projectTasks = projects.Keys.Select(projectName =>
+                SearchProjectAsync(projectName, request, ct));
+
+            var projectResults = await Task.WhenAll(projectTasks);
+
+            allResults = projectResults
+                .SelectMany(r => r.Results)
+                .ToList();
+
+            totalFilesScanned = projectResults.Sum(r => r.FilesScanned);
         }
         else
         {
@@ -194,79 +201,45 @@ public class CachedCodeSearchService : ICodeSearchService
     /// Returns methods that contain the search query in their body.
     /// </summary>
     private async Task<List<CodeSearchResult>> SearchMethodBodiesAsync(
-        string projectName,
-        CSharpFileAnalysis analysis,
-        CodeSearchRequest request,
-        CancellationToken ct)
+    string projectName,
+    CSharpFileAnalysis analysis,
+    CodeSearchRequest request,
+    CancellationToken ct)
     {
         var results = new List<CodeSearchResult>();
-        var cmp = request.CaseSensitive
-            ? StringComparison.Ordinal
-            : StringComparison.OrdinalIgnoreCase;
+        var cmp = request.CaseSensitive ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
 
-        try
+        // Use the already-cached method bodies — zero disk I/O
+        var methods = await _cache.GetMethodsAsync(projectName, analysis.FilePath);
+        if (methods == null) return results;
+
+        foreach (var (_, methodInfo) in methods)
         {
-            // Get project path and read the actual source file
-            var projectInfo = _skeleton.GetAvailableProjectsWithInfo();
-            if (!projectInfo.TryGetValue(projectName, out var info))
-                return results;
+            if (!ShouldInclude(request.MemberType, CodeMemberType.Method)) continue;
 
-            var fullPath = Path.Combine(info.Path, analysis.FilePath);
-            if (!File.Exists(fullPath))
-                return results;
+            var bodyToSearch = methodInfo.FullMethodCode ?? methodInfo.MethodBody ?? string.Empty;
+            if (!bodyToSearch.Contains(request.Query, cmp)) continue;
 
-            var sourceCode = await File.ReadAllTextAsync(fullPath, ct);
-            var lines = sourceCode.Split('\n');
+            // Find exact matching line within the cached code
+            var lines = bodyToSearch.Split('\n');
+            var matchOffset = Array.FindIndex(lines, l => l.Contains(request.Query, cmp));
+            var matchLine = matchOffset >= 0
+                ? methodInfo.LineNumber + matchOffset
+                : methodInfo.LineNumber;
 
-            // Search within each method's body
-            foreach (var cls in analysis.Classes)
+            results.Add(new CodeSearchResult
             {
-                foreach (var method in cls.Methods)
-                {
-                    // Skip if not searching methods
-                    if (!ShouldInclude(request.MemberType, CodeMemberType.Method))
-                        continue;
-
-                    // Extract method body content (between start and end line)
-                    var methodBody = ExtractMethodBody(
-                        lines,
-                        method.LineNumberStart - 1,
-                        method.LineNumberEnd - 1);
-
-                    // Search within method body
-                    if (methodBody.Contains(request.Query, cmp))
-                    {
-                        // Find the exact line number where match occurs
-                        var matchLine = FindMatchingLine(
-                            lines,
-                            method.LineNumberStart - 1,
-                            method.LineNumberEnd - 1,
-                            request.Query,
-                            cmp);
-
-                        results.Add(new CodeSearchResult
-                        {
-                            Name = method.Name,
-                            MemberType = CodeMemberType.Method,
-                            FilePath = analysis.FilePath,
-                            LineNumber = matchLine,
-                            ParentClass = cls.Name,
-                            Signature = BuildMethodSig(method),
-                            Modifiers = method.Modifiers,
-                            RelevanceScore = 0.8, // Content match score
-                            TypeInfo = $"💬 Content match in method body"
-                        });
-
-                        // Only add once per method (even if multiple matches)
-                        break;
-                    }
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex,
-                "Failed to search method bodies in {FilePath}", analysis.FilePath);
+                Name = methodInfo.MethodName,
+                MemberType = CodeMemberType.Method,
+                FilePath = analysis.FilePath,
+                LineNumber = matchLine,
+                ParentClass = methodInfo.ClassName,
+                Signature = $"{methodInfo.ReturnType} {methodInfo.MethodName}({string.Join(", ", methodInfo.Parameters.Select(p => $"{p.Type} {p.Name}"))})",
+                Modifiers = methodInfo.Modifiers,
+                RelevanceScore = 0.8,
+                TypeInfo = "💬 Content match in method body",
+                ProjectName = projectName
+            });
         }
 
         return results;
