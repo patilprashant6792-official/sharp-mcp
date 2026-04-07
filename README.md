@@ -234,6 +234,37 @@ Claude will discover all available tools automatically.
 
 > **Tip:** Every time you restart ngrok, update this URL in Claude.ai connector settings.
 
+### 7b. Connect via Claude Code Desktop (alternative)
+
+If you are using **Claude Code Desktop** instead of Claude.ai in the browser, add the following to your Claude Code Desktop config file (`claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "dotnet-mcp-server": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote",
+        "https://<your-ngrok-id>.ngrok-free.app/sse",
+        "--transport",
+        "sse-only"
+      ]
+    }
+  },
+  "preferences": {
+    "coworkScheduledTasksEnabled": false,
+    "ccdScheduledTasksEnabled": true,
+    "sidebarMode": "chat",
+    "coworkWebSearchEnabled": true
+  }
+}
+```
+
+Replace `https://<your-ngrok-id>.ngrok-free.app` with your actual ngrok URL.
+
+> **Note:** `mcp-remote` is an npm bridge package that proxies SSE-based MCP servers into the stdio transport Claude Code Desktop expects. It is installed on demand via `npx -y` — no global install needed.
+
 ---
 
 ## Available MCP tools
