@@ -116,6 +116,28 @@ async function deleteProject(id) {
     }
 }
 
+async function reindexProject(id) {
+    const project = projects.find(p => p.id === id);
+    const name = project ? project.name : id;
+
+    if (!confirm(`Re-index '${name}'?\nThis will purge the cache and re-analyse all C# files.`)) return;
+
+    try {
+        const res = await fetch(`/api/projects/${id}/reindex`, { method: 'POST' });
+
+        if (!res.ok) {
+            const error = await res.json();
+            throw new Error(error.error || 'Re-index request failed');
+        }
+
+        const data = await res.json();
+        showSuccess(data.message || `Re-indexing started for '${name}'`);
+    } catch (err) {
+        showError('Re-index failed: ' + err.message);
+    }
+}
+
+
 async function validatePath() {
     const path = projectPath.value.trim();
 
@@ -177,6 +199,7 @@ function renderProjects() {
                     <h3>${escapeHtml(p.name)} <span class="status ${p.enabled ? 'enabled' : 'disabled'}">${p.enabled ? 'Enabled' : 'Disabled'}</span></h3>
                 </div>
                 <div class="project-actions">
+                    <button class="btn btn-reindex" onclick="reindexProject('${p.id}')"><span class="spin">↺</span> Re-index</button>
                     <button class="btn btn-edit" onclick="openEditModal('${p.id}')">Edit</button>
                     <button class="btn btn-danger" onclick="deleteProject('${p.id}')">Delete</button>
                 </div>

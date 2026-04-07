@@ -5,83 +5,106 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>.NET MCP Server - Project Configuration</title>
     <link rel="stylesheet" href="styles.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 </head>
 <body>
-    <div class="container">
-        <header>
-            <h1>🚀 .NET MCP Server</h1>
-            <p>Project Configuration</p>
-        </header>
+    <div class="app-layout">
 
-        <div id="error-banner" class="error-banner hidden"></div>
-        <div id="success-banner" class="success-banner hidden"></div>
+        <aside class="sidebar">
+            <div class="sidebar-brand">
+                <div class="brand-icon">&#9889;</div>
+                <div class="brand-text">
+                    <span class="brand-name">dotnet-mcp</span>
+                    <span class="brand-sub">server</span>
+                </div>
+            </div>
+            <nav class="sidebar-nav">
+                <div class="nav-item active">
+                    <span class="nav-icon">&#128194;</span>
+                    <span>Projects</span>
+                </div>
+            </nav>
+            <div class="sidebar-footer">
+                <div class="sidebar-status">
+                    <span class="status-dot"></span>
+                    <span>Server Online</span>
+                </div>
+                <a class="sidebar-credit" href="https://github.com/patilprashant6792-official" target="_blank" rel="noopener">
+                    <span class="credit-label">Created by patilprashant6792-official</span>
+                </a>
+            </div>
+        </aside>
 
-        <section class="config-section">
-            <div class="section-header">
-                <h2>Projects (<span id="project-count">0</span>/10)</h2>
-                <button id="add-project-btn" class="btn btn-primary">+ Add Project</button>
+        <main class="main-content">
+            <div class="page-header">
+                <div class="page-title-group">
+                    <h1 class="page-title">Project Configuration</h1>
+                    <p class="page-subtitle">Manage projects exposed to the MCP toolchain</p>
+                </div>
+                <button id="add-project-btn" class="btn btn-primary">&#43; Add Project</button>
             </div>
 
-            <div id="projects-list" class="projects-list">
-                <!-- Projects will be loaded here -->
+            <div id="error-banner" class="banner banner-error hidden"></div>
+            <div id="success-banner" class="banner banner-success hidden"></div>
+
+            <div class="stats-bar">
+                <div class="stat">
+                    <span class="stat-value" id="project-count">0</span>
+                    <span class="stat-label">/ 10 Projects</span>
+                </div>
             </div>
 
-            <div id="empty-state" class="empty-state">
-                <p>📁 No projects configured yet</p>
-                <p class="hint">Click "Add Project" to get started</p>
+            <div class="projects-scroll-area">
+                <div id="projects-list" class="projects-list"></div>
+
+                <div id="empty-state" class="empty-state">
+                    <div class="empty-icon">&#128193;</div>
+                    <p class="empty-title">No projects configured yet</p>
+                    <p class="empty-hint">Click <strong>Add Project</strong> to register your first .NET project</p>
+                </div>
             </div>
-        </section>
+        </main>
     </div>
 
-    <!-- Add/Edit Project Modal -->
     <div id="project-modal" class="modal hidden">
+        <div class="modal-backdrop"></div>
         <div class="modal-content">
             <div class="modal-header">
-                <h3 id="modal-title">Add New Project</h3>
-                <button id="modal-close" class="close-btn">&times;</button>
+                <div class="modal-title-group">
+                    <h3 id="modal-title">Add New Project</h3>
+                </div>
+                <button id="modal-close" class="close-btn" aria-label="Close">&times;</button>
             </div>
-
             <div class="modal-body">
                 <div class="form-group">
-                    <label for="project-name">Project Name *</label>
-                    <input type="text"
-                           id="project-name"
-                           placeholder="e.g., LocalMcpServer"
-                           maxlength="50"
-                           required>
-                    <small class="hint">Unique identifier for this project</small>
+                    <label for="project-name">Project Name <span class="required">*</span></label>
+                    <input type="text" id="project-name" placeholder="e.g., LocalMcpServer" maxlength="50" autocomplete="off" required>
+                    <small class="hint">Unique identifier used by MCP tools</small>
                 </div>
-
                 <div class="form-group">
-                    <label for="project-path">Project Path *</label>
-                    <input type="text"
-                           id="project-path"
-                           placeholder="C:\repos\my-project"
-                           required>
-                    <button id="validate-path-btn" class="btn btn-secondary">Validate Path</button>
-                    <small class="hint">Full path to project directory containing .sln or .csproj files</small>
+                    <label for="project-path">Project Path <span class="required">*</span></label>
+                    <div class="input-action-row">
+                        <input type="text" id="project-path" placeholder="C:\repos\my-project" autocomplete="off" required>
+                        <button id="validate-path-btn" class="btn btn-ghost">Validate</button>
+                    </div>
+                    <small class="hint">Absolute path to the directory containing .sln or .csproj</small>
                 </div>
-
                 <div id="validation-result" class="validation-result hidden"></div>
-
                 <div class="form-group">
-                    <label for="project-description">Description (Optional)</label>
-                    <input type="text"
-                           id="project-description"
-                           placeholder="e.g., Main MCP server implementation"
-                           maxlength="200">
+                    <label for="project-description">Description <span class="optional">(optional)</span></label>
+                    <input type="text" id="project-description" placeholder="e.g., Main MCP server implementation" maxlength="200">
                 </div>
-
-                <div class="form-group">
-                    <label>
+                <div class="form-group toggle-group">
+                    <label class="toggle-label">
                         <input type="checkbox" id="project-enabled" checked>
-                        Enabled
+                        <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                        <span class="toggle-text">Enabled</span>
                     </label>
                 </div>
             </div>
-
             <div class="modal-footer">
-                <button id="modal-cancel" class="btn btn-secondary">Cancel</button>
+                <button id="modal-cancel" class="btn btn-ghost">Cancel</button>
                 <button id="modal-save" class="btn btn-primary">Save Project</button>
             </div>
         </div>

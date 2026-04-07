@@ -200,6 +200,30 @@ public class ProjectConfigController : ControllerBase
         }
     }
 
+    /// <summary>Purge cache and trigger full re-index for a project</summary>
+    [HttpPost("{id}/reindex")]
+    public async Task<IActionResult> ReindexProject(string id)
+    {
+        try
+        {
+            var project = _configService.GetProject(id);
+            if (project == null)
+                return NotFound(new { error = $"Project '{id}' not found" });
+
+            await _cache.PurgeProjectAsync(project.Name);
+            _trigger.TriggerProjectIndexing(project.Name);
+
+            _logger.LogInformation("Re-index triggered for project '{ProjectName}'", project.Name);
+            return Ok(new { message = $"Re-indexing started for '{project.Name}'" });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to trigger re-index for project {ProjectId}", id);
+            return StatusCode(500, new { error = "Failed to trigger re-index" });
+        }
+    }
+
+
     /// <summary>Validate project path</summary>
     [HttpPost("validate")]
     public async Task<ActionResult<ProjectValidationResult>> ValidatePath(
