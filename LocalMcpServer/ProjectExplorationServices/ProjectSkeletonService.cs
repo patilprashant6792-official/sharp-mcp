@@ -645,7 +645,7 @@ Use this tool to understand project architecture, analyze dependencies, review p
                                 t.Type is IdentifierNameSyntax ins && ins.Identifier.Text.StartsWith("I"))
                     .Select(t => t.Type.ToString())
                     .ToList() ?? new List<string>(),
-                LineNumber = tree.GetLineSpan(classDecl.Span).StartLinePosition.Line + 1
+                LineNumber = tree.GetLineSpan(classDecl.Identifier.Span).StartLinePosition.Line + 1
             };
 
             // Extract class-level attributes
@@ -718,8 +718,8 @@ Use this tool to understand project architecture, analyze dependencies, review p
                             DefaultValue = p.Default?.Value.ToString()
                         })
                         .ToList(),
-                    LineNumber = methodSpan.StartLinePosition.Line + 1,
-                    LineNumberStart = methodSpan.StartLinePosition.Line + 1,
+                    LineNumber = tree.GetLineSpan(method.Identifier.Span).StartLinePosition.Line + 1,
+                    LineNumberStart = tree.GetLineSpan(method.Identifier.Span).StartLinePosition.Line + 1,
                     LineNumberEnd = methodSpan.EndLinePosition.Line + 1
                 };
 
@@ -781,8 +781,8 @@ Use this tool to understand project architecture, analyze dependencies, review p
                     Modifiers = property.Modifiers.Select(m => m.Text).ToList(),
                     HasGetter = property.AccessorList?.Accessors.Any(a => a.IsKind(SyntaxKind.GetAccessorDeclaration)) ?? false,
                     HasSetter = property.AccessorList?.Accessors.Any(a => a.IsKind(SyntaxKind.SetAccessorDeclaration)) ?? false,
-                    LineNumber = propertySpan.StartLinePosition.Line + 1,
-                    LineNumberStart = propertySpan.StartLinePosition.Line + 1,
+                    LineNumber = tree.GetLineSpan(property.Identifier.Span).StartLinePosition.Line + 1,
+                    LineNumberStart = tree.GetLineSpan(property.Identifier.Span).StartLinePosition.Line + 1,
                     LineNumberEnd = propertySpan.EndLinePosition.Line + 1
                 };
 
@@ -838,8 +838,8 @@ Use this tool to understand project architecture, analyze dependencies, review p
                         IsReadOnly = field.Modifiers.Any(m => m.IsKind(SyntaxKind.ReadOnlyKeyword)),
                         IsStatic = field.Modifiers.Any(m => m.IsKind(SyntaxKind.StaticKeyword)),
                         IsConst = field.Modifiers.Any(m => m.IsKind(SyntaxKind.ConstKeyword)),
-                        LineNumber = fieldSpan.StartLinePosition.Line + 1,
-                        LineNumberStart = fieldSpan.StartLinePosition.Line + 1,
+                        LineNumber = tree.GetLineSpan(variable.Identifier.Span).StartLinePosition.Line + 1,
+                        LineNumberStart = tree.GetLineSpan(variable.Identifier.Span).StartLinePosition.Line + 1,
                         LineNumberEnd = fieldSpan.EndLinePosition.Line + 1
                     };
 
@@ -900,7 +900,7 @@ Use this tool to understand project architecture, analyze dependencies, review p
                 Interfaces = interfaceDecl.BaseList?.Types
                     .Select(t => t.Type.ToString())
                     .ToList() ?? new List<string>(), // Inherited interfaces
-                LineNumber = tree.GetLineSpan(interfaceDecl.Span).StartLinePosition.Line + 1
+                LineNumber = tree.GetLineSpan(interfaceDecl.Identifier.Span).StartLinePosition.Line + 1
             };
 
             // Extract interface-level attributes
@@ -952,8 +952,8 @@ Use this tool to understand project architecture, analyze dependencies, review p
                             DefaultValue = p.Default?.Value.ToString()
                         })
                         .ToList(),
-                    LineNumber = methodSpan.StartLinePosition.Line + 1,
-                    LineNumberStart = methodSpan.StartLinePosition.Line + 1,
+                    LineNumber = tree.GetLineSpan(method.Identifier.Span).StartLinePosition.Line + 1,
+                    LineNumberStart = tree.GetLineSpan(method.Identifier.Span).StartLinePosition.Line + 1,
                     LineNumberEnd = methodSpan.EndLinePosition.Line + 1
                 };
 
@@ -980,8 +980,8 @@ Use this tool to understand project architecture, analyze dependencies, review p
                     Modifiers = new List<string> { "public" }, // Interfaces are implicitly public
                     HasGetter = property.AccessorList?.Accessors.Any(a => a.IsKind(SyntaxKind.GetAccessorDeclaration)) ?? false,
                     HasSetter = property.AccessorList?.Accessors.Any(a => a.IsKind(SyntaxKind.SetAccessorDeclaration)) ?? false,
-                    LineNumber = propertySpan.StartLinePosition.Line + 1,
-                    LineNumberStart = propertySpan.StartLinePosition.Line + 1,
+                    LineNumber = tree.GetLineSpan(property.Identifier.Span).StartLinePosition.Line + 1,
+                    LineNumberStart = tree.GetLineSpan(property.Identifier.Span).StartLinePosition.Line + 1,
                     LineNumberEnd = propertySpan.EndLinePosition.Line + 1
                 };
 
