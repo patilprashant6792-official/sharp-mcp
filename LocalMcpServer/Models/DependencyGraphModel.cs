@@ -111,12 +111,18 @@ public class MethodCallGraph
     public string MethodName { get; set; } = string.Empty;
     public int LineNumber { get; set; }
 
-    /// <summary>Methods that call this method</summary>
+    /// <summary>All callers — full unsliced list used for pagination</summary>
     public List<CallSite> CalledBy { get; set; } = new();
 
-    // ADD THIS LINE:
-    /// <summary>Methods that this method calls</summary>
+    /// <summary>Methods that this method calls (naturally bounded by method body)</summary>
     public List<CallSite> Calls { get; set; } = new();
+
+    // Pagination metadata for CalledBy
+    public int TotalCallers { get; set; }
+    public int Page { get; set; } = 1;
+    public int PageSize { get; set; } = 20;
+    public int TotalPages => PageSize > 0 ? (int)Math.Ceiling((double)TotalCallers / PageSize) : 1;
+    public bool HasNextPage => Page < TotalPages;
 }
 
 /// <summary>

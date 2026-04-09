@@ -140,13 +140,13 @@ public class MethodFormatterService : IMethodFormatterService
         md.AppendLine();
 
         // INCOMING CALLS (CalledBy)
-        if (graph.CalledBy.Count == 0)
+        if (graph.TotalCallers == 0)
         {
             md.AppendLine("**Called By:** None (no C# callers detected - may be external entry point, test method, or unused code)");
         }
         else
         {
-            md.AppendLine($"**Called By ({graph.CalledBy.Count}):**");
+            md.AppendLine($"**Called By ({graph.TotalCallers} total) — page {graph.Page} of {graph.TotalPages} (showing {graph.CalledBy.Count}):**");
             md.AppendLine();
 
             foreach (var caller in graph.CalledBy)
@@ -158,6 +158,13 @@ public class MethodFormatterService : IMethodFormatterService
                 md.AppendLine($"  - File: `{caller.FilePath}:{caller.LineNumber}`{classHint}");
             }
             md.AppendLine();
+
+            if (graph.HasNextPage)
+            {
+                var remaining = graph.TotalCallers - (graph.Page * graph.PageSize);
+                md.AppendLine($"⏭️ **More callers available** — call again with `page={graph.Page + 1}` to see the next {graph.PageSize} callers ({remaining} remaining).");
+                md.AppendLine();
+            }
         }
 
         // OUTGOING CALLS (Calls)
@@ -178,41 +185,29 @@ public class MethodFormatterService : IMethodFormatterService
             if (sameCalls.Any())
             {
                 md.AppendLine("**Same Class:**");
-                foreach (var call in sameCalls.Take(5))
-                {
+                foreach (var call in sameCalls)
                     md.AppendLine($"- `{call.MethodName}()` - Line {call.LineNumber}");
-                }
-                if (sameCalls.Count > 5)
-                    md.AppendLine($"  - ...and {sameCalls.Count - 5} more");
                 md.AppendLine();
             }
 
             if (externalCalls.Any())
             {
                 md.AppendLine("**External/Services:**");
-                foreach (var call in externalCalls.Take(5))
-                {
+                foreach (var call in externalCalls)
                     md.AppendLine($"- `{call.ClassName}.{call.MethodName}()` - Line {call.LineNumber}");
-                }
-                if (externalCalls.Count > 5)
-                    md.AppendLine($"  - ...and {externalCalls.Count - 5} more");
                 md.AppendLine();
             }
 
             if (systemCalls.Any())
             {
                 md.AppendLine("**System/Framework:**");
-                foreach (var call in systemCalls.Take(3))
-                {
+                foreach (var call in systemCalls)
                     md.AppendLine($"- `{call.MethodName}()` - Line {call.LineNumber}");
-                }
-                if (systemCalls.Count > 3)
-                    md.AppendLine($"  - ...and {systemCalls.Count - 3} more framework calls");
                 md.AppendLine();
             }
         }
 
-        md.AppendLine($"**Total References:** Incoming: {graph.CalledBy.Count}, Outgoing: {graph.Calls.Count} | **Files Affected:** {graph.CalledBy.Select(c => c.FilePath).Distinct().Count()}");
+        md.AppendLine($"**Total References:** Incoming: {graph.TotalCallers}, Outgoing: {graph.Calls.Count} | **Files Affected:** {graph.CalledBy.Select(c => c.FilePath).Distinct().Count()}");
 
         return md.ToString();
     }

@@ -125,7 +125,8 @@ public class CodeSearchService : ICodeSearchService
             sw.Stop();
 
             var pageSize = request.EffectivePageSize;
-            var page = Math.Max(1, request.Page);
+            var totalPages = rankedResults.Count == 0 ? 1 : (int)Math.Ceiling((double)rankedResults.Count / pageSize);
+            var page = rankedResults.Count == 0 ? 1 : Math.Clamp(request.Page, 1, totalPages);
 
             return new CodeSearchResponse
             {

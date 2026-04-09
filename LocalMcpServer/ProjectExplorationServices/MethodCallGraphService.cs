@@ -27,6 +27,8 @@ public class MethodCallGraphService : IMethodCallGraphService
         string? className = null,
         bool includeTests = false,
         int depth = 1,
+        int page = 1,
+        int pageSize = 20,
         CancellationToken cancellationToken = default)
     {
         var projectMappings = _skeletonService.GetAvailableProjectsWithInfo();
@@ -46,30 +48,36 @@ public class MethodCallGraphService : IMethodCallGraphService
 
         var (targetClass, targetMethod) = FindTargetMethod(fileAnalysis, methodName, className);
 
-        // Build call graph
-        var callGraph = new MethodCallGraph
-        {
-            ProjectName = projectName,
-            FilePath = relativeFilePath,
-            ClassName = targetClass.Name,
-            MethodName = targetMethod.Name,
-            LineNumber = targetMethod.LineNumber
-        };
-
         // Find all C# files
         var allCsFiles = Directory.GetFiles(projectPath, "*.cs", SearchOption.AllDirectories)
             .Where(f => includeTests || !f.Contains("\\Tests\\") && !f.Contains("\\Test\\"))
             .ToList();
 
-        // Search for incoming calls (WHO calls this method)
-        callGraph.CalledBy = await FindCallersAsync(
+        // Full caller scan — always complete, pagination applied after
+        var allCallers = await FindCallersAsync(
             projectPath, allCsFiles, targetMethod.Name, fullFilePath, cancellationToken);
 
-        // 🔥 NEW: Search for outgoing calls (WHAT this method calls)
-        callGraph.Calls = await FindOutgoingCallsAsync(
-            projectPath, fullFilePath, targetClass.Name, targetMethod.Name, cancellationToken);
+        var effectivePageSize = Math.Clamp(pageSize, 1, 200);
+        var totalPages = (int)Math.Ceiling((double)allCallers.Count / effectivePageSize);
+        var effectivePage = allCallers.Count == 0 ? 1 : Math.Clamp(page, 1, totalPages);
 
-        return callGraph;
+        return new MethodCallGraph
+        {
+            ProjectName = projectName,
+            FilePath = relativeFilePath,
+            ClassName = targetClass.Name,
+            MethodName = targetMethod.Name,
+            LineNumber = targetMethod.LineNumber,
+            TotalCallers = allCallers.Count,
+            Page = effectivePage,
+            PageSize = effectivePageSize,
+            CalledBy = allCallers
+                .Skip((effectivePage - 1) * effectivePageSize)
+                .Take(effectivePageSize)
+                .ToList(),
+            Calls = await FindOutgoingCallsAsync(
+                projectPath, fullFilePath, targetClass.Name, targetMethod.Name, cancellationToken)
+        };
     }
 
     private (ClassInfo targetClass, MethodInfo targetMethod) FindTargetMethod(

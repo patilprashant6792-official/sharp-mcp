@@ -64,7 +64,8 @@ public class CachedCodeSearchService : ICodeSearchService
         var ranked = RankAndFilter(allResults, request);
 
         var pageSize = request.EffectivePageSize;
-        var page = Math.Max(1, request.Page);
+        var totalPages = ranked.Count == 0 ? 1 : (int)Math.Ceiling((double)ranked.Count / pageSize);
+        var page = ranked.Count == 0 ? 1 : Math.Clamp(request.Page, 1, totalPages);
 
         return new CodeSearchResponse
         {

@@ -42,17 +42,28 @@ public class MethodCallGraphTools
         string? className = null,
 
         [Description("Optional: Include test files in analysis (default: false, production code only)")]
-        bool includeTests = false)
+        bool includeTests = false,
+
+        [Description("Optional: Results per page for CalledBy list (default: 20, max: 200). Use with 'page' when a method has many callers.")]
+        int pageSize = 20,
+
+        [Description("Optional: Page number, 1-based (default: 1). Increment to see more callers.")]
+        int page = 1)
     {
         try
         {
+            if (page < 1) page = 1;
+            if (pageSize < 1 || pageSize > 200) pageSize = Math.Clamp(pageSize, 1, 200);
+
             var graph = await _callGraphService.AnalyzeMethodDependenciesAsync(
                 projectName,
                 relativeFilePath,
                 methodName,
                 className,
                 includeTests,
-                depth: 1);
+                depth: 1,
+                page: page,
+                pageSize: pageSize);
 
             return _methodFormatter.FormatMethodCallGraph(graph);
         }
