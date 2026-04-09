@@ -44,7 +44,13 @@ public class CodeSearchTools
         [Description("Optional: Case-sensitive search (default: false for broader matches)")]
         bool caseSensitive = false,
 
-        [Description("Optional: Maximum results to return (default: 20). Increase for comprehensive analysis.")]
+        [Description("Optional: Results per page (default: 20, max: 200). Use with 'page' to paginate large result sets.")]
+        int pageSize = 20,
+
+        [Description("Optional: Page number, 1-based (default: 1). Increment to retrieve subsequent pages.")]
+        int page = 1,
+
+        [Description("Optional: Maximum results to return — legacy alias for pageSize. Ignored when pageSize is set explicitly.")]
         int topK = 20)
     {
         try
@@ -54,13 +60,18 @@ public class CodeSearchTools
                 return $"❌ Invalid member type: '{memberType}'. Valid values: {string.Join(", ", Enum.GetNames<CodeMemberType>())}";
             }
 
+            if (page < 1) page = 1;
+            if (pageSize < 1 || pageSize > 200) pageSize = Math.Clamp(pageSize, 1, 200);
+
             var request = new CodeSearchRequest
             {
                 ProjectName = projectName,
                 Query = query,
                 MemberType = parsedMemberType,
                 CaseSensitive = caseSensitive,
-                TopK = topK
+                TopK = topK,
+                Page = page,
+                PageSize = pageSize
             };
 
             var response = await _codeSearchService.SearchGloballyAsync(request);

@@ -27,10 +27,10 @@ public class CodeSearchFormatterService : ICodeSearchFormatterService
             md.AppendLine();
         }
 
-        md.AppendLine($"**Total Results:** {response.TotalResults} (showing top {response.Results.Count})  ");
+        md.AppendLine($"**Total Results:** {response.TotalResults}  ");
+        md.AppendLine($"**Showing:** page {response.Page} of {response.TotalPages} ({response.Results.Count} results, {response.PageSize} per page)  ");
         md.AppendLine($"**Files Scanned:** {response.FilesScanned}  ");
         md.AppendLine($"**Search Duration:** {response.SearchDuration.TotalMilliseconds:F0}ms");
-        md.AppendLine();
 
         if (response.Results.Count == 0)
         {
@@ -91,6 +91,11 @@ public class CodeSearchFormatterService : ICodeSearchFormatterService
         }
 
         md.AppendLine("---");
+        if (response.HasNextPage)
+        {
+            md.AppendLine($"⏭️ **More results available** — call again with `page={response.Page + 1}` to see the next {response.PageSize} results ({response.TotalResults - (response.Page * response.PageSize)} remaining).");
+            md.AppendLine();
+        }
         md.AppendLine("## 💡 Next Steps");
         md.AppendLine();
 

@@ -19,7 +19,10 @@ public class CodeSearchRequest
     public required string Query { get; set; }
     public CodeMemberType MemberType { get; set; } = CodeMemberType.All;
     public bool CaseSensitive { get; set; } = false;
-    public int TopK { get; set; } = 20;
+    public int TopK { get; set; } = 20;   // kept for backward compat — drives PageSize when PageSize not set explicitly
+    public int Page { get; set; } = 1;
+    public int PageSize { get; set; } = 0; // 0 = fall back to TopK
+    public int EffectivePageSize => PageSize > 0 ? PageSize : TopK;
 }
 
 public class CodeSearchResponse
@@ -31,6 +34,10 @@ public class CodeSearchResponse
     public TimeSpan SearchDuration { get; set; }
     public int FilesScanned { get; set; }
     public int ProjectsSearched { get; set; } = 1;
+    public int Page { get; set; } = 1;
+    public int PageSize { get; set; } = 20;
+    public int TotalPages => PageSize > 0 ? (int)Math.Ceiling((double)TotalResults / PageSize) : 1;
+    public bool HasNextPage => Page < TotalPages;
 }
 
 public class CodeSearchResult

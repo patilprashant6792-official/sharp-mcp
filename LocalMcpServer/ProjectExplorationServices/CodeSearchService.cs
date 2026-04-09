@@ -124,15 +124,20 @@ public class CodeSearchService : ICodeSearchService
             var rankedResults = RankAndFilterResults(allResults, request);
             sw.Stop();
 
+            var pageSize = request.EffectivePageSize;
+            var page = Math.Max(1, request.Page);
+
             return new CodeSearchResponse
             {
                 Query = request.Query,
                 ProjectName = request.ProjectName,
                 TotalResults = allResults.Count,
-                Results = rankedResults.Take(request.TopK).ToList(),
+                Results = rankedResults.Skip((page - 1) * pageSize).Take(pageSize).ToList(),
                 SearchDuration = sw.Elapsed,
                 FilesScanned = filesScanned,
-                ProjectsSearched = projectsToSearch.Count
+                ProjectsSearched = projectsToSearch.Count,
+                Page = page,
+                PageSize = pageSize
             };
         }
         catch (Exception ex)

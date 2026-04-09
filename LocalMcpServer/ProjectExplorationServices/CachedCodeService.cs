@@ -63,17 +63,22 @@ public class CachedCodeSearchService : ICodeSearchService
 
         var ranked = RankAndFilter(allResults, request);
 
+        var pageSize = request.EffectivePageSize;
+        var page = Math.Max(1, request.Page);
+
         return new CodeSearchResponse
         {
             Query = request.Query,
             ProjectName = request.ProjectName,
             TotalResults = ranked.Count,
-            Results = ranked,
+            Results = ranked.Skip((page - 1) * pageSize).Take(pageSize).ToList(),
             FilesScanned = totalFilesScanned,
             SearchDuration = sw.Elapsed,
             ProjectsSearched = request.ProjectName == "*"
                 ? _skeleton.GetAvailableProjects().Count
-                : 1
+                : 1,
+            Page = page,
+            PageSize = pageSize
         };
     }
 
@@ -471,6 +476,6 @@ public class CachedCodeSearchService : ICodeSearchService
     private static string BuildMethodSig(MethodInfo m) =>
         $"{m.ReturnType} {m.Name}({string.Join(", ", m.Parameters.Select(p => $"{p.Type} {p.Name}"))})";
 
-    private static List<CodeSearchResult> RankAndFilter(List<CodeSearchResult> results, CodeSearchRequest req) =>
-        results.OrderByDescending(r => r.RelevanceScore).ThenBy(r => r.Name).Take(req.TopK).ToList();
+private static List<CodeSearchResult> RankAndFilter(List<CodeSearchResult> results, CodeSearchRequest req) =>
+        results.OrderByDescending(r => r.RelevanceScore).ThenBy(r => r.Name).ToList(); // no Take — caller paginates
 }
