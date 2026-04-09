@@ -176,18 +176,34 @@ public sealed class FileModificationService : IFileModificationService
                 }
             }
 
-            // ── Overlap detection (on sorted ranges) ──────────────────────
+            // ── Overlap detection ─────────────────────────────────────────
+            // Insert at startLine N inserts *after* line N, so model it as the
+            // half-open point N+1. A Patch/Delete range [s,e] conflicts when s <= N+1 <= e,
+            // i.e. the existing EndLine >= NextStartLine check covers it naturally once
+            // Insert is included in the sorted list with StartLine = p.StartLine + 1.
             var sorted = ranged
-                .Where(p => p.Action is PatchAction.Patch or PatchAction.Delete)
+                .Select(p => p.Action == PatchAction.Insert
+                    ? new PatchOperation(p.Action, p.StartLine + 1, p.StartLine + 1, p.Content)
+                    : p)
                 .OrderBy(p => p.StartLine)
                 .ToList();
 
             for (var i = 0; i < sorted.Count - 1; i++)
             {
                 if (sorted[i].EndLine >= sorted[i + 1].StartLine)
+                {
+                    // Reconstruct readable labels from the originals
+                    var a = patches.Where(p => p.Action != PatchAction.Append).OrderBy(p => p.StartLine).ToList()[i];
+                    var b = patches.Where(p => p.Action != PatchAction.Append).OrderBy(p => p.StartLine).ToList()[i + 1];
+                    var labelA = a.Action == PatchAction.Insert
+                        ? $"Insert after line {a.StartLine}"
+                        : $"[{a.StartLine}-{a.EndLine}]";
+                    var labelB = b.Action == PatchAction.Insert
+                        ? $"Insert after line {b.StartLine}"
+                        : $"[{b.StartLine}-{b.EndLine}]";
                     throw new ArgumentException(
-                        $"Patches overlap: [{sorted[i].StartLine}-{sorted[i].EndLine}] " +
-                        $"conflicts with [{sorted[i + 1].StartLine}-{sorted[i + 1].EndLine}].");
+                        $"Patches overlap: {a.Action} {labelA} conflicts with {b.Action} {labelB}.");
+                }
             }
 
             // ── Apply: non-append bottom-up, appends last ─────────────────

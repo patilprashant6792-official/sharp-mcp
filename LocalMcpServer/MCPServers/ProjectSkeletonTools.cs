@@ -1,7 +1,7 @@
-﻿using MCP.Core.Services;
+﻿using MCP.Core.Models;
+using MCP.Core.Services;
 using ModelContextProtocol.Server;
 using System.ComponentModel;
-using System.Text.Json;
 
 namespace RisingTideAI.Trade.MCP.Host.MCPServers;
 
@@ -74,13 +74,7 @@ public class ProjectSkeletonTools
                 pageSize,
                 CancellationToken.None);
 
-            var json = JsonSerializer.Serialize(result, new JsonSerializerOptions
-            {
-                WriteIndented = true,
-                PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-            });
-
-            return json;
+            return FormatFolderSearchAsMarkdown(result);
         }
         catch (ArgumentException ex)
         {
@@ -102,5 +96,44 @@ public class ProjectSkeletonTools
         {
             return $"❌ Error searching folder: {ex.Message}\n{ex.StackTrace}";
         }
+    }
+
+    private static string FormatFolderSearchAsMarkdown(FolderSearchResponse result)
+    {
+        var sb = new System.Text.StringBuilder();
+
+        var filterLabel = string.IsNullOrWhiteSpace(result.SearchPattern)
+            ? string.Empty
+            : $" (filter: `{result.SearchPattern}`)";
+
+        sb.AppendLine($"## Folder: `{result.FolderPath}`{filterLabel}");
+        sb.AppendLine($"**Project:** {result.ProjectName}");
+        sb.AppendLine();
+        sb.AppendLine($"Showing {result.Files.Count} of {result.TotalFiles} file(s) — page {result.Page}/{result.TotalPages}");
+        sb.AppendLine();
+
+        if (result.Files.Count == 0)
+        {
+            sb.AppendLine("_No files found._");
+            return sb.ToString();
+        }
+
+        sb.AppendLine("## Legend");
+        sb.AppendLine("- ✓ **Small file** (≤15KB) - Use `read_file_content`");
+        sb.AppendLine("- ⚠️ **Large file** (>15KB) - Use `analyze_c_sharp_file` + `fetch_method_implementation`");
+        sb.AppendLine();
+
+        foreach (var f in result.Files)
+        {
+            var sizeTag = f.IsLargeFile ? "⚠️" : "✓";
+            sb.AppendLine($"- {sizeTag} `{f.RelativePath}` ({f.SizeDisplay}, {f.LineCount} lines)");
+        }
+
+        if (result.HasNextPage)
+            sb.AppendLine($"\n_Next page: call `search_folder_files` with `page={result.Page + 1}`_");
+        if (result.HasPreviousPage)
+            sb.AppendLine($"_Previous page: `page={result.Page - 1}`_");
+
+        return sb.ToString();
     }
 }
