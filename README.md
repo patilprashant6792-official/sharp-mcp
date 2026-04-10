@@ -92,20 +92,28 @@ Claude can create, edit, move, rename, and delete files — all guarded by:
 
 Supported write modes for `write_file`: `create` (fails if file exists), `overwrite` (fails if file is missing), `upsert` (always succeeds).
 
-### NuGet package exploration — zero hallucinations
+### NuGet package exploration — reflects the actual DLL, not training data
 
-The server reflects the actual DLL installed in your project using `System.Reflection.MetadataLoadContext`. It does not guess from training data.
+This is the most technically distinct feature of the server. When an AI is asked "how do I use method X from package Y", the standard answer comes from training data — which may be months or years behind the version you actually have installed. This server eliminates that entirely.
 
-Four-step pipeline:
+Here is what happens when you call `get_namespace_summary`:
+
+1. **Version resolution** — `NuGet.Protocol` queries NuGet.org and resolves the exact version you specify (or latest stable). No guessing.
+2. **Package download** — The `.nupkg` is downloaded and unpacked into a temp directory. The `lib/` folder is inspected and the right `net*/` target framework folder is selected, with an automatic fallback chain (`net10.0` → `net9.0` → `net8.0` → `netstandard2.1` → ...) so you always get the closest match.
+3. **Dependency resolution** — The package's `.nuspec` dependency groups are parsed. Every declared dependency is downloaded and its assemblies are collected. This matters because `MetadataLoadContext` needs to resolve types that cross assembly boundaries — without dependencies, reflection on generics and inherited types fails.
+4. **DLL reflection via `MetadataLoadContext`** — The assembly is loaded into an isolated `MetadataLoadContext` alongside the runtime's own DLLs and all dependency assemblies. This means the binary is inspected, not executed, and there is zero risk of running static constructors or polluting the running process. Every public type is walked: methods (`MethodInfo`), properties (`PropertyInfo`), fields (`FieldInfo`), events (`EventInfo`), and constructors — all with full parameter types, visibility, and modifiers.
+5. **`MetadataLoadContext` is disposed immediately** after extraction — no assembly leaks, no AppDomain side effects.
+6. **Result cached in Redis for 7 days** — keyed on `packageId:version:targetFramework`. The second call for the same package is a Redis read, not a download.
+7. **Temp packages are deleted** after metadata is extracted — the server doesn't accumulate `.nupkg` files on disk.
+
+The result Claude receives is a set of valid, copy-paste-ready C# signatures reflecting the exact binary you are shipping against — not what the model thinks the API looks like.
 
 ```
-search_nu_get_packages          ← find the package, confirm the ID
-get_nu_get_package_namespaces   ← list all namespaces in the installed version
-get_namespace_summary           ← all types, methods, and properties, copy-paste ready
+search_nu_get_packages          ← confirm the exact NuGet package ID
+get_nu_get_package_namespaces   ← discover which namespaces the package exposes
+get_namespace_summary           ← all public types, methods, properties — from the DLL
 get_method_overloads            ← expand collapsed overload groups on demand
 ```
-
-Every signature targets your exact installed version and target framework. If the answer is "that method doesn't exist in the version you have" — that's the answer Claude gets.
 
 ### Global code search with pagination
 
@@ -311,11 +319,10 @@ Add to `claude_desktop_config.json`:
 ### NuGet exploration
 
 | Tool | Description |
-|------|-------------|
-| `search_nu_get_packages` | Search NuGet.org by package ID. Use the exact ID (`Microsoft.EntityFrameworkCore`, not `EntityFrameworkCore`). |
-| `get_nu_get_package_namespaces` | List all namespaces in a package at a specific version and target framework. |
-| `get_namespace_summary` | All types, methods, and properties in a namespace — production-ready, copy-paste C# signatures. |
-| `get_method_overloads` | Expand collapsed overload groups when `get_namespace_summary` shows `+ N overloads`. |
+| `search_nu_get_packages` | Queries NuGet.org by package ID. Returns version, download count, and tags. Use the full ID (`Microsoft.EntityFrameworkCore`, not `EFCore`). |
+| `get_nu_get_package_namespaces` | Downloads and unpacks the `.nupkg`, selects the correct target framework folder, and returns all exposed namespaces. |
+| `get_namespace_summary` | Reflects the actual DLL via `MetadataLoadContext` — returns all public types with full method, property, field, and event signatures. Cached in Redis for 7 days. |
+| `get_method_overloads` | Expands overload groups collapsed in `get_namespace_summary` into individual signatures with full parameter lists. |
 
 ### Utility
 
