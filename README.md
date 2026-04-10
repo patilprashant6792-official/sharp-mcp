@@ -130,6 +130,58 @@ Register as many projects as you have. Every tool accepts `projectName`. Claude 
 
 ### Background indexing and real-time cache coherence
 
+
+---
+
+## Why this matters for .NET developers specifically
+
+Every major AI coding tool in 2025–2026 is a general-purpose assistant designed primarily around JavaScript, Python, and TypeScript. They work on .NET, but with measurable blind spots that cost real development time. This section breaks down where those gaps are and what this server does differently.
+
+### The hallucination problem in .NET is worse than the averages suggest
+
+A March 2025 developer analysis on Medium documented that GitHub Copilot "tends to hallucinate about C# methods and properties that do not exist" — generated code that doesn't compile, requiring manual correction every time. A 2025–2026 study measuring AI coding tool quality put Copilot's wrong-dependency rate at roughly 15%, and a GitHub community thread titled *"What happened to Copilot? Hallucinatory, complicating, wrong, sycophantic, forgetful"* accumulated hundreds of upvotes from developers describing exactly this experience for strongly-typed languages like C#.
+
+The core reason is structural: every LLM is frozen at its training cutoff. NuGet packages release breaking changes constantly — `System.Text.Json` changed nullable handling between 6.0 and 8.0, EF Core changed `DbContext` configuration patterns between 7.0 and 8.0, `IgnoreNullValues` was deprecated mid-lifecycle. A model trained before those changes will confidently generate code that no longer compiles against the version in your `.csproj`.
+
+`dotnet-mcp-server` doesn't use training data for library APIs. It downloads the `.nupkg`, reflects the actual DLL binary using `MetadataLoadContext`, and returns signatures from the version you have installed. There is no training cutoff. The answer is always current to your exact dependency lock.
+
+### Context window limits hit .NET solutions harder than small projects
+
+GitHub Copilot's effective context cap is 64K tokens on standard plans, expanding to 128K on VS Code Insiders (confirmed by GitHub's own API — `max_prompt_tokens: 128000`). At roughly 4 tokens per line of C#, that's approximately 32,000 lines before the context window is full — which sounds like a lot until you're working across a microservices solution with multiple projects, each with their own services, repositories, controllers, and models.
+
+More critically, even within that limit, Copilot's `#codebase` search is widely documented as poor quality. A filed VS Code issue with 23 upvotes from April 2025 described it as "quite poor and doesn't seem to include all the necessary files as context" — leading developers to manually attach files and burn through their context budget before getting a useful answer.
+
+This server inverts that model. Claude never receives a full file unless you explicitly ask for raw content. A complete class analysis costs ~300–500 tokens. A single method body costs ~80–150 tokens. You can work across an entire 5-project solution without approaching any context limit because the server delivers only what is needed, structured, on demand.
+
+### Your code never leaves your machine
+
+Every cloud-based AI coding tool — Copilot, Cursor, Windsurf, Tabnine cloud — sends your source code to an external server to generate completions. GitHub Copilot's privacy documentation confirms that code snippets are transmitted to GitHub's AI servers with each request. A 2026 analysis found that 79% of organizations using AI for automated workflows have no visibility into what data those systems actually touch or where they send it.
+
+For .NET developers working in finance, healthcare, or any regulated industry, this is not a theoretical concern. The EU AI Act entered phased enforcement in August 2025. The EU-US Data Privacy Framework collapsed in late 2025, leaving organizations without a clear legal mechanism for cross-border data transfers. A Gartner projection put 75% of organizations demanding AI solutions with strong data residency guarantees by 2026.
+
+This server runs entirely on your machine. Claude.ai receives structured metadata — class names, method signatures, line ranges — never raw source. Your business logic, your proprietary algorithms, and your customer data never travel anywhere.
+
+### What the alternatives actually offer — and where they stop
+
+| | GitHub Copilot Pro | Cursor Pro | Tabnine Enterprise | **dotnet-mcp-server** |
+|---|---|---|---|---|
+| **Cost** | $10/month | $20/month | $59/user/month | Free, self-hosted |
+| **Code leaves machine** | Yes | Yes (AWS infra) | Optional (on-prem tier) | **Never** |
+| **NuGet API accuracy** | Training data only | Training data only | Training data only | **Actual DLL reflection** |
+| **Multi-project support** | Via `#codebase` (unreliable) | Workspace indexing | Workspace indexing | **Native, per-tool `projectName`** |
+| **C# method line numbers** | No | No | No | **Yes — exact, for patch ops** |
+| **Context strategy** | File dump | File dump + embeddings | File dump + embeddings | **Surgical: metadata only** |
+| **IDE lock-in** | VS Code, VS, JetBrains | VS Code only (fork) | Multi-IDE | **IDE-agnostic (Claude.ai + Claude Code)** |
+| **Scales to microservices** | Context fills up | Context fills up | Context fills up | **Unlimited registered projects** |
+
+**Cost note:** Tabnine's self-hosted on-premises deployment — the only competing option that keeps code off external servers — starts at $59/user/month. For a 5-developer team that's $295/month, or $3,540/year. `dotnet-mcp-server` is open source and free to run on any machine that can run Redis and .NET 10.
+
+### What this does not replace
+
+This is not an inline autocomplete tool. It does not suggest the next line as you type. It does not integrate into your IDE as an extension.
+
+What it replaces is the *reasoning session* — when you open a chat, describe a problem, and ask Claude to understand your codebase, plan a refactor, check what breaks if you change a signature, look up how a dependency actually works, or write a feature that spans multiple files. Those sessions are where context limits, hallucinated APIs, and cloud data exposure all cause real damage. That is exactly the scope this server is built for.
+
 Two background services run independently:
 
 - **`CSharpAnalysisBackgroundService`**: on startup, walks all registered projects and pre-warms Redis with full Roslyn analysis and method bodies. Re-runs on a configurable schedule (default: 60 minutes). Concurrency is bounded by `IndexingConcurrency` (default: 4 parallel Roslyn parses).
