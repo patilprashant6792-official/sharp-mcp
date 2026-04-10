@@ -161,20 +161,6 @@ For .NET developers working in finance, healthcare, or any regulated industry, t
 
 This server runs entirely on your machine. Claude.ai receives structured metadata — class names, method signatures, line ranges — never raw source. Your business logic, your proprietary algorithms, and your customer data never travel anywhere.
 
-### What the alternatives actually offer — and where they stop
-
-| | GitHub Copilot Pro | Cursor Pro | Tabnine Enterprise | **dotnet-mcp-server** |
-|---|---|---|---|---|
-| **Cost** | $10/month | $20/month | $59/user/month | Free, self-hosted |
-| **Code leaves machine** | Yes | Yes (AWS infra) | Optional (on-prem tier) | **Never** |
-| **NuGet API accuracy** | Training data only | Training data only | Training data only | **Actual DLL reflection** |
-| **Multi-project support** | Via `#codebase` (unreliable) | Workspace indexing | Workspace indexing | **Native, per-tool `projectName`** |
-| **C# method line numbers** | No | No | No | **Yes — exact, for patch ops** |
-| **Context strategy** | File dump | File dump + embeddings | File dump + embeddings | **Surgical: metadata only** |
-| **IDE lock-in** | VS Code, VS, JetBrains | VS Code only (fork) | Multi-IDE | **IDE-agnostic (Claude.ai + Claude Code)** |
-| **Scales to microservices** | Context fills up | Context fills up | Context fills up | **Unlimited registered projects** |
-
-**Cost note:** Tabnine's self-hosted on-premises deployment — the only competing option that keeps code off external servers — starts at $59/user/month. For a 5-developer team that's $295/month, or $3,540/year. `dotnet-mcp-server` is open source and free to run on any machine that can run Redis and .NET 10.
 
 ### What this does not replace
 
