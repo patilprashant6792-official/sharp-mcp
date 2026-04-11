@@ -61,6 +61,8 @@ builder.Services.AddSingleton<INuGetPackageExplorer>(sp =>
     var logger = sp.GetRequiredService<ILogger<NuGetPackageExplorer>>();
     return new NuGetPackageExplorer(loader, logger);
 });
+builder.Services.AddSingleton<NuGetIntelliSenseExplorer>();
+
 
 
 builder.Services.AddSingleton<IConnectionMultiplexer>(sp =>
