@@ -1,41 +1,90 @@
-﻿# dotnet-mcp-server
+﻿# sharp-mcp
 
-A self-hosted [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server that gives Claude surgical, token-efficient access to your local C# codebase — without ever sending raw source to the cloud.
+> **The AI-native C# dev assistant** — real NuGet DLL reflection, Roslyn codebase analysis, surgical file editing, and live build diagnostics. One self-hosted MCP server. Zero code leaves your machine.
 
-Built on **.NET 10**, powered by **Roslyn**, backed by **Redis**.
+Built on **.NET 10** · Powered by **Roslyn** · Backed by **Redis** · Reflected via **MetadataLoadContext**
 
 ---
 
-## The problem it solves
+## Why this exists
 
-Every AI coding tool eventually hits the same wall: context windows fill up, library APIs get hallucinated, and your code leaves your machine with every paste.
+AI coding tools have three silent killers in .NET:
 
-`dotnet-mcp-server` is a different model. Instead of dumping files into Claude's context, it runs locally and exposes your codebase as a set of structured MCP tools. Claude calls only what it needs — one class at a time, one method at a time — from the exact version of every dependency you have installed, across all your projects at once, with zero data leaving your machine.
+1. **Hallucinated APIs** — every LLM is frozen at its training cutoff. NuGet ships breaking changes constantly. The model confidently generates code that hasn't compiled since .NET 6.
+2. **Context bloat** — a 500-line service class costs ~2,000 tokens raw. Ten files and you're done before writing a single line.
+3. **Your code leaves your machine** — every cloud AI tool sends source to an external server. Every request.
+
+`sharp-mcp` fixes all three. It runs locally, exposes your codebase as structured MCP tools, and — most importantly — **reflects your actual installed NuGet DLLs** using `MetadataLoadContext`. Not training data. Your exact pinned binary.
+
+---
+
+## The novel feature: real NuGet DLL reflection
+
+When you ask any other AI tool "how do I use method X from package Y", the answer comes from training data — which may be months or years behind the version in your `.csproj`. This server eliminates that problem entirely.
+
+For every NuGet package you explore, it:
+
+1. **Resolves the exact version** from your `.csproj` via `NuGet.Protocol` — no guessing
+2. **Downloads the `.nupkg`** and selects the right `net*/` target framework folder with an automatic fallback chain
+3. **Resolves all dependencies** — downloads transitive packages so `MetadataLoadContext` can resolve cross-assembly types correctly
+4. **Loads the DLL into an isolated `MetadataLoadContext`** — binary inspection only, never executed, zero risk of static constructors or process pollution
+5. **Returns valid, copy-paste-ready C# signatures** from the exact binary you are shipping against
+6. **Disposes the context immediately** — no assembly leaks, no AppDomain side effects
+7. **Caches the result in Redis for 7 days** — keyed on `packageId:version:targetFramework`; second call is a Redis read, not a download
+
+No training cutoff. No hallucinated overloads. No deprecated methods that "still work" in the model's memory. Your DLL. Your truth.
+
+---
+
+## The complete loop — all tools are interdependent
+
+NuGet reflection is the most novel piece, but it only matters inside a complete dev loop. These 22 tools form a closed circuit — each one makes the others more powerful:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                       sharp-mcp loop                       │
+│                                                             │
+│  understand          explore          edit          verify  │
+│  codebase    ──►    NuGet APIs  ──►  files    ──►   build   │
+│     ▲                                                  │    │
+│     └──────────────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────────────┘
+```
+
+| Stage | Tools | What they give you |
+|-------|-------|--------------------|
+| **Understand** | `get_project_skeleton`, `analyze_c_sharp_file`, `fetch_method_implementation`, `read_file_content`, `search_folder_files` | Full codebase orientation without dumping raw files into context |
+| **Search & impact** | `search_code_globally`, `analyze_method_call_graph` | Find anything across all projects; know every caller before you touch a signature |
+| **Explore NuGet** | `get_package_namespaces` → `get_namespace_types` → `get_type_surface` → `get_type_shape` → `get_method_overloads` | Real signatures from your actual DLL — IDE-style progressive discovery |
+| **Edit** | `write_file`, `edit_lines`, `move_file`, `delete_file`, `create_folder`, `move_folder`, `delete_folder` | Surgical, safe file operations with semaphore locking, path sandboxing, and atomic batch validation |
+| **Verify** | `execute_dotnet_command` | `dotnet clean + build` with structured Roslyn diagnostics — catch errors before moving on |
+
+None of these works as well alone. You explore a NuGet API, write code against the real signatures, edit the right file using line numbers from Roslyn analysis, then immediately build to verify. That's the product.
 
 ---
 
 ## How it works
 
 ```
-Claude.ai ──HTTPS──► ngrok tunnel ──SSE──► dotnet-mcp-server ──Roslyn──► Your C# source
+Claude.ai ──HTTPS──► ngrok tunnel ──SSE──► sharp-mcp ──Roslyn──► Your C# source
                                                    │
                                                    ├── Redis ──► AST cache + project index
                                                    │
-                                                   └── NuGet ──► Installed package reflection
+                                                   └── NuGet ──► MetadataLoadContext DLL reflection
 ```
 
 1. **Claude calls a tool** — e.g. `analyze_c_sharp_file`.
 2. **Redis is checked first.** Cache hit → response in milliseconds, zero disk I/O.
-3. **On a miss**, Roslyn parses the `.cs` file and extracts structured metadata: namespaces, classes, methods with line ranges, DI constructor graphs, attributes, XML docs. The result is serialized and stored in Redis with a configurable TTL.
+3. **On a miss**, Roslyn parses the `.cs` file and extracts structured metadata: namespaces, classes, methods with line ranges, DI constructor graphs, attributes, XML docs. Serialized and stored in Redis with a configurable TTL.
 4. **A `FileSystemWatcher`** monitors every registered project path. On any `Create`, `Change`, `Delete`, or `Rename` event, a 300 ms debounce fires and the affected file is re-analysed and written back to Redis — so Claude always sees the code as it exists on disk right now.
 5. **A background indexer** runs on startup and on a configurable schedule (default: every 60 minutes), walking every `.cs` file across all registered projects and pre-warming the cache. The first tool call is never cold.
 6. **Claude gets a compact representation** — never raw source — and uses it to reason, suggest edits, check impact, or look up exact library signatures.
 
 ---
 
-## Token efficiency — why it matters
+## Token efficiency
 
-A 500-line service class costs roughly 2 000 tokens to load raw. Ten files and you've burned your entire context budget before writing a single line of code.
+A 500-line service class costs roughly 2,000 tokens raw. Ten files and you've burned your entire context budget before writing a single line.
 
 This server uses a tiered reading strategy instead:
 
@@ -44,13 +93,15 @@ This server uses a tiered reading strategy instead:
 | 1 | `get_project_skeleton` | Full folder tree, file sizes, NuGet packages | ~200 |
 | 2 | `analyze_c_sharp_file` | Class API surface: methods, properties, DI graph | ~300–500 |
 | 3 | `fetch_method_implementation` | Exact method body with line numbers | ~80–150 |
-| 4 | `read_file_content` | Raw content — non-C# files or tiny scripts. Supports line range (`startLine`/`endLine`) and grep (`query`) modes to avoid loading full files | full file / slice / matches |
-| 5 | `search_folder_files` | Paginated file listing in a folder — use when `get_project_skeleton` shows 50+ files | ~50–100 |
-| 6 | `search_code_globally` | Name/keyword search across one or all projects; paginated up to 200 results | ~100–200 |
+| 4 | `read_file_content` | Raw content — non-C# files or targeted slices via line range / grep mode | varies |
+| 5 | `search_folder_files` | Paginated file listing when a folder has 50+ files | ~50–100 |
+| 6 | `search_code_globally` | Name/keyword search across one or all projects | ~100–200 |
+| NuGet | `get_namespace_types` | Type index for a namespace — names + member count hints | ~10/type |
+| NuGet | `get_type_surface` | Constructors + methods of one type | ~300 |
 
 ---
 
-## Features
+## Deep-dive: tool capabilities
 
 ### Roslyn-powered C# analysis
 
@@ -71,7 +122,7 @@ Batch mode accepts comma-separated file paths with no spaces: `Services/UserServ
 
 ### Method call graph analysis
 
-Before touching a method signature, run `analyze_method_call_graph`. It walks every `.cs` file in the project using a Roslyn syntax walker and returns:
+Before touching a method signature, run `analyze_method_call_graph`. It walks every `.cs` file using a Roslyn syntax walker and returns:
 
 - Every caller: exact file path, class name, and line number
 - Every outgoing call from the target method
@@ -92,25 +143,9 @@ Claude can create, edit, move, rename, and delete files — all guarded by:
 
 Supported write modes for `write_file`: `create` (fails if file exists), `overwrite` (fails if file is missing), `upsert` (always succeeds).
 
-### NuGet package exploration — reflects the actual DLL, not training data
+### NuGet IntelliSense — IDE-style progressive exploration
 
-This is the most technically distinct feature of the server. When an AI is asked "how do I use method X from package Y", the standard answer comes from training data — which may be months or years behind the version you actually have installed. This server eliminates that entirely.
-
-Here is what happens when you first explore a package:
-
-1. **Version resolution** — `NuGet.Protocol` queries NuGet.org and resolves the exact version you specify (or latest stable). No guessing.
-2. **Package download** — The `.nupkg` is downloaded and unpacked into a temp directory. The `lib/` folder is inspected and the right `net*/` target framework folder is selected, with an automatic fallback chain (`net10.0` → `net9.0` → `net8.0` → `netstandard2.1` → ...) so you always get the closest match.
-3. **Dependency resolution** — The package's `.nuspec` dependency groups are parsed. Every declared dependency is downloaded and its assemblies are collected. This matters because `MetadataLoadContext` needs to resolve types that cross assembly boundaries — without dependencies, reflection on generics and inherited types fails.
-4. **DLL reflection via `MetadataLoadContext`** — The assembly is loaded into an isolated `MetadataLoadContext` alongside the runtime's own DLLs and all dependency assemblies. This means the binary is inspected, not executed, and there is zero risk of running static constructors or polluting the running process. Every public type is walked: methods (`MethodInfo`), properties (`PropertyInfo`), fields (`FieldInfo`), events (`EventInfo`), and constructors — all with full parameter types, visibility, and modifiers.
-5. **`MetadataLoadContext` is disposed immediately** after extraction — no assembly leaks, no AppDomain side effects.
-6. **Result cached in Redis for 7 days** — keyed on `packageId:version:targetFramework`. The second call for the same package is a Redis read, not a download.
-7. **Temp packages are deleted** after metadata is extracted — the server doesn't accumulate `.nupkg` files on disk.
-
-The result Claude receives is a set of valid, copy-paste-ready C# signatures reflecting the exact binary you are shipping against — not what the model thinks the API looks like.
-
-#### IntelliSense-style progressive exploration
-
-The exploration tools mirror exactly what a developer does in an IDE — not a bulk dump of everything at once. A human installs a package, types a `using`, picks a type from the autocomplete dropdown, calls a method, then presses F12 to inspect the return type. These tools follow the same sequence:
+The NuGet exploration tools mirror exactly what a developer does in an IDE — not a bulk dump of everything at once:
 
 ```
 get_package_namespaces          ← "I installed OpenAI — what namespaces does it expose?"
@@ -122,39 +157,38 @@ get_method_overloads(...)       ← expand collapsed overloads on demand
 
 Each step returns only what is needed at that moment. Nothing is dumped until asked for.
 
-**What gets suppressed automatically** — these exist in the DLL but carry no discovery value:
-- Empty shell types (0 methods, 0 properties, 0 constructors) — base/marker classes with no callable surface
-- SDK-internal properties (e.g. `JsonPatch& Patch`) — serialization infrastructure, never user-facing
-- Enum and struct types in the type index — shown as compact `[5 options]` hints; full values appear only when you call `get_type_shape` on them
-- All member details of types you haven't asked about yet — `get_namespace_types` gives you a type index with counts (`[6 ctors, 44 methods, 2 props]`), not the methods themselves
-
 **Token cost comparison on `OpenAI.Responses`:**
 
 | Approach | Tokens |
-|----------|--------|
-| Old: `get_namespace_summary` — full namespace dump | ~6 000 |
-| New: `get_package_namespaces` + `get_namespace_types` | ~250 |
-| New: + `get_type_surface(ResponsesClient)` | ~550 |
-| New: + `get_type_shape(CreateResponseOptions)` | ~800 total |
+|----------|---------|
+| Full namespace dump | ~6,000 |
+| `get_package_namespaces` + `get_namespace_types` | ~250 |
+| + `get_type_surface(ResponsesClient)` | ~550 |
+| + `get_type_shape(CreateResponseOptions)` | ~800 total |
 
-The full-dump tool (`get_namespace_summary`, available in the legacy tools) still exists for cases where you genuinely need everything at once. The IntelliSense tools are the default path.
+### Global code search
 
-### Global code search with pagination
-
-`search_code_globally` finds classes, interfaces, methods, properties, and fields by name or keyword. Scope it to one project or pass `projectName="*"` to search across every registered project simultaneously. Results are fully paginated (`page` / `pageSize` up to 200 per page).
+`search_code_globally` finds classes, interfaces, methods, properties, and fields by name or keyword. Pass `projectName="*"` to search across every registered project simultaneously. Paginated up to 200 per page.
 
 Practical uses:
-- Security audit: `search_code_globally("*", "Authorize")` — find every authorization point across all services
-- Dependency check: `search_code_globally("*", "IOrderService")` — find every consumer before renaming an interface
+- Security audit: `search_code_globally("*", "Authorize")` — find every authorization point
+- Dependency check: `search_code_globally("*", "IOrderService")` — find every consumer before renaming
 - Pre-refactor impact: locate all references to a class before splitting it
 
 ### Multi-project support from day one
 
-Register as many projects as you have. Every tool accepts `projectName`. Claude can reason across your entire microservices solution in a single conversation — skeleton one service, read a method from another, edit a third — with no context switching and no copy-pasting between windows.
+Register as many projects as you have. Every tool accepts `projectName`. Claude can reason across your entire microservices solution in a single conversation — skeleton one service, read a method from another, edit a third — with no context switching.
 
 ### Background indexing and real-time cache coherence
 
+Two background services run independently:
 
+- **`CSharpAnalysisBackgroundService`**: on startup, walks all registered projects and pre-warms Redis with full Roslyn analysis and method bodies. Re-runs on a configurable schedule (default: 60 minutes). Concurrency bounded by `IndexingConcurrency` (default: 4 parallel Roslyn parses).
+- **`CSharpFileWatcherService`**: registers a `FileSystemWatcher` per project. On any `.cs` file event, debounces 300 ms, then re-analyses only the changed file and updates Redis. Delete events evict the key. Rename events evict the old key and index the new path.
+
+Both services coexist without blocking each other.
+
+---
 ---
 
 ## Why this matters for .NET developers specifically
@@ -167,7 +201,7 @@ A March 2025 developer analysis on Medium documented that GitHub Copilot "tends 
 
 The core reason is structural: every LLM is frozen at its training cutoff. NuGet packages release breaking changes constantly — `System.Text.Json` changed nullable handling between 6.0 and 8.0, EF Core changed `DbContext` configuration patterns between 7.0 and 8.0, `IgnoreNullValues` was deprecated mid-lifecycle. A model trained before those changes will confidently generate code that no longer compiles against the version in your `.csproj`.
 
-`dotnet-mcp-server` doesn't use training data for library APIs. It downloads the `.nupkg`, reflects the actual DLL binary using `MetadataLoadContext`, and returns signatures from the version you have installed. There is no training cutoff. The answer is always current to your exact dependency lock.
+`sharp-mcp` doesn't use training data for library APIs. It downloads the `.nupkg`, reflects the actual DLL binary using `MetadataLoadContext`, and returns signatures from the version you have installed. There is no training cutoff. The answer is always current to your exact dependency lock.
 
 ### Context window limits hit .NET solutions harder than small projects
 
@@ -322,7 +356,7 @@ In Claude.ai → **Settings** → **Connectors** → **Add connector**:
 
 | Field | Value |
 |-------|-------|
-| Name | `dotnet-mcp-server` |
+| Name | `sharp-mcp` |
 | URL | `https://<your-ngrok-id>.ngrok-free.app/sse` |
 
 Claude discovers all tools automatically via the MCP capability negotiation protocol.
@@ -334,7 +368,7 @@ Add to `claude_desktop_config.json`:
 ```json
 {
   "mcpServers": {
-    "dotnet-mcp-server": {
+    "sharp-mcp": {
       "command": "npx",
       "args": ["-y", "mcp-remote", "https://<your-ngrok-id>.ngrok-free.app/sse", "--transport", "sse-only"]
     }
