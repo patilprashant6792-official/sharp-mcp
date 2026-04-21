@@ -56,6 +56,8 @@ builder.Services.AddSingleton<ICodeSearchFormatterService, CodeSearchFormatterSe
 builder.Services.AddSingleton<IProjectConfigService, RedisProjectConfigService>();
 builder.Services.AddSingleton<IFileModificationService, FileModificationService>(); ;
 builder.Services.AddSingleton<IDotnetCliService, DotnetCliService>();
+builder.Services.AddSingleton<NuGetXmlDocService>();
+builder.Services.AddSingleton<INuGetXmlDocCache>(sp => sp.GetRequiredService<NuGetXmlDocService>());
 builder.Services.AddSingleton<INuGetPackageLoader, NuGetPackageLoader>();
 builder.Services.AddSingleton<INuGetPackageExplorer>(sp =>
 {
