@@ -2,9 +2,10 @@
 
 public interface IPackageMetadataCache
 {
-    PackageMetadata? Get(string key);
-    void Set(string key, PackageMetadata metadata);
     bool TryGet(string key, out PackageMetadata? metadata);
+    void Set(string key, PackageMetadata metadata);
+    Task<PackageMetadata?> TryGetAsync(string key);
+    Task SetAsync(string key, PackageMetadata metadata);
 }
 
 public class PackageMetadata

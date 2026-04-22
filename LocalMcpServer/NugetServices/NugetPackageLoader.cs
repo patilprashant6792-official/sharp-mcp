@@ -76,7 +76,8 @@ public class NuGetPackageLoader : INuGetPackageLoader
 
         var cacheKey = BuildCacheKey(packageId, version, targetFramework);
 
-        if (_cache.TryGet(cacheKey, out var metadata) && metadata != null)
+        var metadata = await _cache.TryGetAsync(cacheKey);
+        if (metadata != null)
         {
             return metadata;
         }
@@ -95,7 +96,8 @@ public class NuGetPackageLoader : INuGetPackageLoader
 
         try
         {
-            if (_cache.TryGet(cacheKey, out metadata) && metadata != null)
+            metadata = await _cache.TryGetAsync(cacheKey);
+            if (metadata != null)
             {
                 return metadata;
             }
@@ -111,6 +113,14 @@ public class NuGetPackageLoader : INuGetPackageLoader
         finally
         {
             semaphore.Release();
+
+            // Evict the semaphore once the cache entry exists — it will never be needed again
+            // for this key. TryRemove is atomic; a racing GetOrAdd will create a fresh one.
+            if (await _cache.TryGetAsync(cacheKey) != null)
+            {
+                if (_semaphores.TryRemove(cacheKey, out var evicted))
+                    evicted.Dispose();
+            }
         }
     }
 
@@ -151,7 +161,7 @@ public class NuGetPackageLoader : INuGetPackageLoader
         List<string> dependencyPaths;
         try
         {
-            dependencyPaths = await DownloadDependencies(packageId, resolvedVersion, framework, cancellationToken);
+            dependencyPaths = await DownloadDependencies(packagePath, resolvedVersion, framework, cancellationToken);
             _logger.LogInformation("Downloaded {Count} dependency packages for {PackageId}@{Version}",
                 dependencyPaths.Count, packageId, resolvedVersion);
         }
@@ -244,7 +254,17 @@ public class NuGetPackageLoader : INuGetPackageLoader
         }
 
         var cacheKey = BuildCacheKey(packageId, resolvedVersion.ToString(), targetFramework);
-        _cache.Set(cacheKey, metadata);
+        await _cache.SetAsync(cacheKey, metadata);
+
+        // When the caller did not pin a version, also store under the "latest" key
+        // (e.g. "Tomlyn@latest@net10.0") so the next version=null call hits the cache
+        // instead of triggering a full re-download + reflection cycle every time.
+        if (string.IsNullOrEmpty(version))
+        {
+            var latestKey = BuildCacheKey(packageId, null, targetFramework);
+            await _cache.SetAsync(latestKey, metadata);
+            _logger.LogDebug("Stored metadata under \"latest\" alias: {Key}", latestKey);
+        }
 
         // Clean up downloaded packages after metadata is cached
         try
@@ -294,8 +314,9 @@ public class NuGetPackageLoader : INuGetPackageLoader
         }
     }
 
+    // Reads the .nuspec that DownloadPackage already extracted to disk — zero extra network cost.
     private async Task<List<string>> DownloadDependencies(
-        string packageId,
+        string packagePath,
         NuGetVersion version,
         string targetFramework,
         CancellationToken cancellationToken)
@@ -304,31 +325,21 @@ public class NuGetPackageLoader : INuGetPackageLoader
 
         try
         {
-            var resource = await _repository.GetResourceAsync<FindPackageByIdResource>(cancellationToken);
+            // The .nuspec is always extracted alongside the .dll files by DownloadPackage.
+            var nuspecFile = Directory.GetFiles(packagePath, "*.nuspec", SearchOption.TopDirectoryOnly)
+                .FirstOrDefault();
 
-            using var packageStream = new MemoryStream();
-
-            using var timeoutCts = new CancellationTokenSource(TimeSpan.FromMinutes(1));
-            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
-
-            var success = await resource.CopyNupkgToStreamAsync(
-                packageId,
-                version,
-                packageStream,
-                _sourceCacheContext,
-                NullLogger.Instance,
-                linkedCts.Token);
-
-            if (!success)
+            if (nuspecFile == null)
             {
-                _logger.LogWarning("Failed to fetch package for dependency analysis: {PackageId}@{Version}", packageId, version);
+                _logger.LogWarning("No .nuspec found in extracted package path: {PackagePath}", packagePath);
                 return dependencyPaths;
             }
 
-            packageStream.Seek(0, SeekOrigin.Begin);
-
-            using var packageReader = new PackageArchiveReader(packageStream);
-            var nuspecReader = await packageReader.GetNuspecReaderAsync(cancellationToken);
+            NuspecReader nuspecReader;
+            await using (var nuspecStream = File.OpenRead(nuspecFile))
+            {
+                nuspecReader = new NuspecReader(nuspecStream);
+            }
 
             NuGetFramework nugetFramework;
             try
@@ -340,7 +351,7 @@ public class NuGetPackageLoader : INuGetPackageLoader
                 nugetFramework = NuGetFramework.Parse("net10.0");
             }
 
-            var dependencyGroups = nuspecReader.GetDependencyGroups();
+            var dependencyGroups = nuspecReader.GetDependencyGroups().ToList();
 
             var reducer = new FrameworkReducer();
             var nearest = reducer.GetNearest(nugetFramework, dependencyGroups.Select(g => g.TargetFramework));
@@ -371,7 +382,7 @@ public class NuGetPackageLoader : INuGetPackageLoader
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to analyze dependencies for package: {PackageId}@{Version}", packageId, version);
+            _logger.LogWarning(ex, "Failed to analyze dependencies from package path: {PackagePath}", packagePath);
         }
 
         return dependencyPaths;

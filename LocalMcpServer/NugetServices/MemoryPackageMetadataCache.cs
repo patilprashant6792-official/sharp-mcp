@@ -18,17 +18,21 @@ public class MemoryPackageMetadataCache : IPackageMetadataCache
     }
 
     public PackageMetadata? Get(string key)
-    {
-        return _cache.Get<PackageMetadata>(key);
-    }
+        => _cache.Get<PackageMetadata>(key);
 
     public void Set(string key, PackageMetadata metadata)
-    {
-        _cache.Set(key, metadata, _cacheOptions);
-    }
+        => _cache.Set(key, metadata, _cacheOptions);
 
     public bool TryGet(string key, out PackageMetadata? metadata)
+        => _cache.TryGetValue(key, out metadata);
+
+    // In-process memory — no I/O, Task.FromResult is correct here.
+    public Task<PackageMetadata?> TryGetAsync(string key)
+        => Task.FromResult(_cache.Get<PackageMetadata>(key));
+
+    public Task SetAsync(string key, PackageMetadata metadata)
     {
-        return _cache.TryGetValue(key, out metadata);
+        _cache.Set(key, metadata, _cacheOptions);
+        return Task.CompletedTask;
     }
 }
