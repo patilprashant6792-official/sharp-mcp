@@ -11,234 +11,90 @@ Built on **.NET 10** · Powered by **Roslyn** · Backed by **Redis** · Reflecte
 - [I Just Wanted Claude to Stop Hallucinating My NuGet APIs. Somehow I Ended Up Building a Full C# Dev Assistant.](https://dev.to/prashant_patil_9e62d3fa8a/i-just-wanted-claude-to-stop-hallucinating-my-nuget-apis-somehow-i-ended-up-building-a-full-c-dev-12om) — dev.to
 
 
-## Why this exists
+## Why I built this — the reasoning behind every decision
 
-AI coding tools have three silent killers in .NET:
+Most MCP servers are wrappers. sharp-mcp started as a question: *what would a C# developer actually need if they built this themselves, for themselves?*
 
-1. **Hallucinated APIs** — every LLM is frozen at its training cutoff. NuGet ships breaking changes constantly. The model confidently generates code that hasn't compiled since .NET 6.
-2. **Context bloat** — a 500-line service class costs ~2,000 tokens raw. Ten files and you're done before writing a single line.
-3. **Your code leaves your machine** — every cloud AI tool sends source to an external server. Every request.
-
-`sharp-mcp` fixes all three. It runs locally, exposes your codebase as structured MCP tools, and — most importantly — **reflects your actual installed NuGet DLLs** using `MetadataLoadContext`. Not training data. Your exact pinned binary.
+Here's the full reasoning — every problem, every tradeoff, every decision in sequence.
 
 ---
 
-## The novel feature: real NuGet DLL reflection
+### Problem 1: Generic AI tooling is wasteful for .NET backend work
 
-When you ask any other AI tool "how do I use method X from package Y", the answer comes from training data — which may be months or years behind the version in your `.csproj`. This server eliminates that problem entirely.
-
-For every NuGet package you explore, it:
-
-1. **Resolves the exact version** from your `.csproj` via `NuGet.Protocol` — no guessing
-2. **Downloads the `.nupkg`** and selects the right `net*/` target framework folder with an automatic fallback chain
-3. **Resolves all dependencies** — downloads transitive packages so `MetadataLoadContext` can resolve cross-assembly types correctly
-4. **Loads the DLL into an isolated `MetadataLoadContext`** — binary inspection only, never executed, zero risk of static constructors or process pollution
-5. **Returns valid, copy-paste-ready C# signatures** from the exact binary you are shipping against
-6. **Disposes the context immediately** — no assembly leaks, no AppDomain side effects
-7. **Caches the result in Redis for 7 days** — keyed on `packageId:version:targetFramework`; second call is a Redis read, not a download
-
-No training cutoff. No hallucinated overloads. No deprecated methods that "still work" in the model's memory. Your DLL. Your truth.
+Claude Code, GitHub Copilot, Cursor — they're all built for every language, every ecosystem. That generality has a real cost. When you're doing C# backend work, you're paying token overhead for abstractions you don't need. I wanted something that only knows C#, only knows .NET, and uses that focus to do the job better.
 
 ---
 
-## The complete loop — all tools are interdependent
+### Problem 2: Direct file reading was the obvious first move — and it was too slow
 
-NuGet reflection is the most novel piece, but it only matters inside a complete dev loop. These 22 tools form a closed circuit — each one makes the others more powerful:
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                       sharp-mcp loop                       │
-│                                                             │
-│  understand          explore          edit          verify  │
-│  codebase    ──►    NuGet APIs  ──►  files    ──►   build   │
-│     ▲                                                  │    │
-│     └──────────────────────────────────────────────────┘    │
-└─────────────────────────────────────────────────────────────┘
-```
-
-| Stage | Tools | What they give you |
-|-------|-------|--------------------|
-| **Understand** | `get_project_skeleton`, `analyze_c_sharp_file`, `fetch_method_implementation`, `read_file_content`, `search_folder_files` | Full codebase orientation without dumping raw files into context |
-| **Search & impact** | `search_code_globally`, `analyze_method_call_graph` | Find anything across all projects; know every caller before you touch a signature |
-| **Explore NuGet** | `get_package_namespaces` → `get_namespace_types` → `get_type_surface` → `get_type_shape` → `get_method_overloads` | Real signatures from your actual DLL — IDE-style progressive discovery |
-| **Edit** | `write_file`, `edit_lines`, `move_file`, `delete_file`, `create_folder`, `move_folder`, `delete_folder` | Surgical, safe file operations with semaphore locking, path sandboxing, and atomic batch validation |
-| **Verify** | `execute_dotnet_command` | `dotnet clean + build` with structured Roslyn diagnostics — catch errors before moving on |
-
-None of these works as well alone. You explore a NuGet API, write code against the real signatures, edit the right file using line numbers from Roslyn analysis, then immediately build to verify. That's the product.
+I started where everyone starts: read the file, pass it to the model. It worked. It was also impractically slow for any real codebase. Search latency was high, large files burned context fast, and it touched the real filesystem on every request. Not viable — and that failure made the solution obvious: parse the structure once, cache it, and serve from memory.
 
 ---
 
-## How it works
+### Problem 3: Roslyn was the right answer, but it needed a home
 
-```
-Claude.ai ──HTTPS──► ngrok tunnel ──SSE──► sharp-mcp ──Roslyn──► Your C# source
-                                                   │
-                                                   ├── Redis ──► AST cache + project index
-                                                   │
-                                                   └── NuGet ──► MetadataLoadContext DLL reflection
-```
+Roslyn gives you a full AST — classes, methods, line spans, dependencies, everything structured. But parsing on every request defeats the purpose. The data needed to live somewhere fast.
 
-1. **Claude calls a tool** — e.g. `analyze_c_sharp_file`.
-2. **Redis is checked first.** Cache hit → response in milliseconds, zero disk I/O.
-3. **On a miss**, Roslyn parses the `.cs` file and extracts structured metadata: namespaces, classes, methods with line ranges, DI constructor graphs, attributes, XML docs. Serialized and stored in Redis with a configurable TTL.
-4. **A `FileSystemWatcher`** monitors every registered project path. On any `Create`, `Change`, `Delete`, or `Rename` event, a 300 ms debounce fires and the affected file is re-analysed and written back to Redis — so Claude always sees the code as it exists on disk right now.
-5. **A background indexer** runs on startup and on a configurable schedule (default: every 60 minutes), walking every `.cs` file across all registered projects and pre-warming the cache. The first tool call is never cold.
-6. **Claude gets a compact representation** — never raw source — and uses it to reason, suggest edits, check impact, or look up exact library signatures.
+Redis was the obvious choice. If you're a .NET backend developer, you already have Redis. It's not an exotic dependency — it's infrastructure you trust. So: parse once with Roslyn, cache in Redis, serve in milliseconds.
 
 ---
 
-## Token efficiency
+### Problem 4: NuGet hallucinations — the one nobody talks about
 
-A 500-line service class costs roughly 2,000 tokens raw. Ten files and you've burned your entire context budget before writing a single line.
+This was the most interesting problem to solve. AI models generate correct-looking C# that doesn't compile because they don't know what's actually inside the NuGet packages you're using. Documentation is incomplete. Training data is stale. The model guesses.
 
-This server uses a tiered reading strategy instead:
+The fix: stop guessing, decode the binary. `MetadataLoadContext` loads the real `.nupkg`, reads the actual IL, and returns real signatures — real method names, real parameter types, real generics. No docs, no guessing. The model gets the same ground truth the compiler uses.
 
-| Step | Tool | What you get | Typical token cost |
-|------|------|--------------|--------------------|
-| 1 | `get_project_skeleton` | Full folder tree, file sizes, NuGet packages | ~200 |
-| 2 | `analyze_c_sharp_file` | Class API surface: methods, properties, DI graph | ~300–500 |
-| 3 | `fetch_method_implementation` | Exact method body with line numbers | ~80–150 |
-| 4 | `read_file_content` | Raw content — non-C# files or targeted slices via line range / grep mode | varies |
-| 5 | `search_folder_files` | Paginated file listing when a folder has 50+ files | ~50–100 |
-| 6 | `search_code_globally` | Name/keyword search across one or all projects | ~100–200 |
-| NuGet | `get_namespace_types` | Type index for a namespace — names + member count hints | ~10/type |
-| NuGet | `get_type_surface` | Constructors + methods of one type | ~300 |
+Frontier LLMs can web search documentation for behavioral context. What they can't do is know the exact method signatures in your specific package version. That's what this solves.
 
 ---
 
-## Deep-dive: tool capabilities
+### Problem 5: The cache needs to stay warm
 
-### Roslyn-powered C# analysis
-
-The core of the server is a Roslyn syntax tree walker that runs on every `.cs` file. It extracts:
-
-- Namespace and all `using` directives
-- Every class with its modifiers, base type, and implemented interfaces
-- Constructor parameters mapped as a dependency injection graph (what the class depends on, typed)
-- Every method: full signature, return type, parameters with types, attributes, XML doc comments, and exact start/end line numbers
-- Properties, fields, and constants with modifiers and types
-- A `private` vs `public` mode toggle — default is public API surface only; flip `includePrivateMembers=true` to see internals during debugging
-
-Batch mode accepts comma-separated file paths with no spaces: `Services/UserService.cs,Controllers/OrderController.cs`.
-
-### Precise method fetching with line numbers
-
-`fetch_method_implementation` returns the complete body of a method with every line numbered. Line numbers are exact — Claude can reference them directly in `edit_lines` patch operations. Batch mode (`Method1,Method2`) fetches multiple methods from one file in a single round trip.
-
-### Method call graph analysis
-
-Before touching a method signature, run `analyze_method_call_graph`. It walks every `.cs` file using a Roslyn syntax walker and returns:
-
-- Every caller: exact file path, class name, and line number
-- Every outgoing call from the target method
-- Paginated results (`page` / `pageSize` up to 200) for high-traffic methods
-
-This is the difference between a safe refactor and a breaking change that only surfaces in CI.
-
-### Live file operations with safety guarantees
-
-Claude can create, edit, move, rename, and delete files — all guarded by:
-
-- **Per-file semaphore locking**: concurrent writes to the same file are serialized, never dropped or interleaved
-- **Atomic batch validation for moves**: all destinations are validated before any file moves; one failure aborts the entire batch
-- **Path sandboxing**: every operation is resolved against the registered project root — path traversal is structurally impossible
-- **Blocked path patterns**: `bin/`, `obj/`, `.git/`, `.vs/`, `node_modules/`, and any file matching password/token/secret filename patterns are permanently blocked at the service layer, not as a config flag
-- **Automatic cache eviction**: every successful write invalidates the corresponding Redis keys so the next analysis call sees the updated file, not a stale snapshot
-- **`edit_lines` bottom-up application**: patches are validated for overlaps, then applied in descending line-number order — original line numbers stay correct for every patch in the batch
-
-Supported write modes for `write_file`: `create` (fails if file exists), `overwrite` (fails if file is missing), `upsert` (always succeeds).
-
-### NuGet IntelliSense — IDE-style progressive exploration
-
-The NuGet exploration tools mirror exactly what a developer does in an IDE — not a bulk dump of everything at once:
-
-```
-get_package_namespaces          ← "I installed OpenAI — what namespaces does it expose?"
-get_namespace_types             ← "I added using OpenAI.Chat — what types exist?" (~10 tokens/type)
-get_type_surface(typeName)      ← "I picked ChatClient — what can I call on it?"
-get_type_shape(typeName)        ← "CompleteChat returned ChatCompletion — what's on it?"
-get_method_overloads(...)       ← expand collapsed overloads on demand
-```
-
-Each step returns only what is needed at that moment. Nothing is dumped until asked for.
-
-**Token cost comparison on `OpenAI.Responses`:**
-
-| Approach | Tokens |
-|----------|---------|
-| Full namespace dump | ~6,000 |
-| `get_package_namespaces` + `get_namespace_types` | ~250 |
-| + `get_type_surface(ResponsesClient)` | ~550 |
-| + `get_type_shape(CreateResponseOptions)` | ~800 total |
-
-### Global code search
-
-`search_code_globally` finds classes, interfaces, methods, properties, and fields by name or keyword. Pass `projectName="*"` to search across every registered project simultaneously. Paginated up to 200 per page.
-
-Practical uses:
-- Security audit: `search_code_globally("*", "Authorize")` — find every authorization point
-- Dependency check: `search_code_globally("*", "IOrderService")` — find every consumer before renaming
-- Pre-refactor impact: locate all references to a class before splitting it
-
-### Multi-project support from day one
-
-Register as many projects as you have. Every tool accepts `projectName`. Claude can reason across your entire microservices solution in a single conversation — skeleton one service, read a method from another, edit a third — with no context switching.
-
-### Background indexing and real-time cache coherence
-
-Two background services run independently:
-
-- **`CSharpAnalysisBackgroundService`**: on startup, walks all registered projects and pre-warms Redis with full Roslyn analysis and method bodies. Re-runs on a configurable schedule (default: 60 minutes). Concurrency bounded by `IndexingConcurrency` (default: 4 parallel Roslyn parses).
-- **`CSharpFileWatcherService`**: registers a `FileSystemWatcher` per project. On any `.cs` file event, debounces 300 ms, then re-analyses only the changed file and updates Redis. Delete events evict the key. Rename events evict the old key and index the new path.
-
-Both services coexist without blocking each other.
+A cached Roslyn analysis is only useful if it reflects the current state of the file. The solution: a file watcher architecture that listens for changes and invalidates or updates the relevant cache entries automatically. Every edit you make in your IDE propagates to the cache without manual intervention. Global code search runs against warm cache data — within seconds, without touching the real codebase.
 
 ---
+
+### Problem 6: Claude.ai needs a bridge to localhost
+
+The last piece was practical. An LLM running over the web can't reach your local machine directly. ngrok provides the SSE tunnel. It's a real dependency and I won't pretend otherwise — a VS Code extension is on the roadmap to eliminate it. But for now it's one command, and the rest of the setup is `dotnet run`.
+
 ---
 
-## Why this matters for .NET developers specifically
+### The UI that ties it together
 
-Every major AI coding tool in 2025–2026 is a general-purpose assistant designed primarily around JavaScript, Python, and TypeScript. They work on .NET, but with measurable blind spots that cost real development time. This section breaks down where those gaps are and what this server does differently.
+One thing I didn't want was a tool that required editing JSON config files or restarting a server every time you added a project. So there's a built-in project management UI at `/config.html`.
 
-### The hallucination problem in .NET is worse than the averages suggest
+You point it at a solution folder. That's it. sharp-mcp indexes everything — classes, methods, dependencies, file sizes — and the LLM immediately has full structural awareness of that codebase. Each project is independently enabled, re-indexable on demand, and deletable without touching any config file.
 
-A March 2025 developer analysis on Medium documented that GitHub Copilot "tends to hallucinate about C# methods and properties that do not exist" — generated code that doesn't compile, requiring manual correction every time. A 2025–2026 study measuring AI coding tool quality put Copilot's wrong-dependency rate at roughly 15%, and a GitHub community thread titled *"What happened to Copilot? Hallucinatory, complicating, wrong, sycophantic, forgetful"* accumulated hundreds of upvotes from developers describing exactly this experience for strongly-typed languages like C#.
+And yes — sharp-mcp manages its own source code through this same UI. The tool is its own first user.
 
-The core reason is structural: every LLM is frozen at its training cutoff. NuGet packages release breaking changes constantly — `System.Text.Json` changed nullable handling between 6.0 and 8.0, EF Core changed `DbContext` configuration patterns between 7.0 and 8.0, `IgnoreNullValues` was deprecated mid-lifecycle. A model trained before those changes will confidently generate code that no longer compiles against the version in your `.csproj`.
+One detail worth calling out explicitly: **sensitive files never reach the model.** `appsettings.json`, secrets, credentials, `.env` files — they're on a blocklist at the file read layer. The UI gives you full control over what's exposed; the server enforces what's protected.
 
-`sharp-mcp` doesn't use training data for library APIs. It downloads the `.nupkg`, reflects the actual DLL binary using `MetadataLoadContext`, and returns signatures from the version you have installed. There is no training cutoff. The answer is always current to your exact dependency lock.
+---
 
-### Context window limits hit .NET solutions harder than small projects
+### The three principles everything was built around
 
-GitHub Copilot's effective context cap is 64K tokens on standard plans, expanding to 128K on VS Code Insiders (confirmed by GitHub's own API — `max_prompt_tokens: 128000`). At roughly 4 tokens per line of C#, that's approximately 32,000 lines before the context window is full — which sounds like a lot until you're working across a microservices solution with multiple projects, each with their own services, repositories, controllers, and models.
+- **Speed** — solved by Redis cache + file watcher keeping it warm
+- **Token efficiency** — every tool description tells the model when *not* to call it; batch modes, size hints, and "last resort" labels are all deliberate prompt engineering baked into the architecture
+- **Correctness** — NuGet reflection via `MetadataLoadContext` means the model works with real signatures, not approximations
 
-More critically, even within that limit, Copilot's `#codebase` search is widely documented as poor quality. A filed VS Code issue with 23 upvotes from April 2025 described it as "quite poor and doesn't seem to include all the necessary files as context" — leading developers to manually attach files and burn through their context budget before getting a useful answer.
-
-This server inverts that model. Claude never receives a full file unless you explicitly ask for raw content. A complete class analysis costs ~300–500 tokens. A single method body costs ~80–150 tokens. You can work across an entire 5-project solution without approaching any context limit because the server delivers only what is needed, structured, on demand.
-
-### Your code never leaves your machine
-
-Every cloud-based AI coding tool — Copilot, Cursor, Windsurf, Tabnine cloud — sends your source code to an external server to generate completions. GitHub Copilot's privacy documentation confirms that code snippets are transmitted to GitHub's AI servers with each request. A 2026 analysis found that 79% of organizations using AI for automated workflows have no visibility into what data those systems actually touch or where they send it.
-
-For .NET developers working in finance, healthcare, or any regulated industry, this is not a theoretical concern. The EU AI Act entered phased enforcement in August 2025. The EU-US Data Privacy Framework collapsed in late 2025, leaving organizations without a clear legal mechanism for cross-border data transfers. A Gartner projection put 75% of organizations demanding AI solutions with strong data residency guarantees by 2026.
-
-This server runs entirely on your machine. Claude.ai receives structured metadata — class names, method signatures, line ranges — never raw source. Your business logic, your proprietary algorithms, and your customer data never travel anywhere.
-
+---
 
 ### What this does not replace
 
 This is not an inline autocomplete tool. It does not suggest the next line as you type. It does not integrate into your IDE as an extension.
 
-What it replaces is the *reasoning session* — when you open a chat, describe a problem, and ask Claude to understand your codebase, plan a refactor, check what breaks if you change a signature, look up how a dependency actually works, or write a feature that spans multiple files. Those sessions are where context limits, hallucinated APIs, and cloud data exposure all cause real damage. That is exactly the scope this server is built for.
-
-Two background services run independently:
-
-- **`CSharpAnalysisBackgroundService`**: on startup, walks all registered projects and pre-warms Redis with full Roslyn analysis and method bodies. Re-runs on a configurable schedule (default: 60 minutes). Concurrency is bounded by `IndexingConcurrency` (default: 4 parallel Roslyn parses).
-- **`CSharpFileWatcherService`**: registers a `FileSystemWatcher` per project. On any `.cs` file event, debounces 300 ms (to handle the burst of events Visual Studio fires on a single save), then re-analyses only the changed file and updates Redis. Delete events evict the key. Rename events evict the old key and index the new path.
-
-Both services coexist without blocking each other. The watcher loop and the scheduled full-pass loop run on separate tasks.
+What it replaces is the *reasoning session* — when you open a chat, describe a problem, and ask the LLM to understand your codebase, plan a refactor, check what breaks if you change a signature, look up how a dependency actually works, or implement a feature that spans multiple files. Those sessions are where context limits, hallucinated APIs, and cloud data exposure all cause real damage. That is exactly the scope this is built for.
 
 ---
+
+### Coding system prompt
+
+A public system prompt is available in [`prompts/CODING_SYSTEM_PROMPT.md`](prompts/CODING_SYSTEM_PROMPT.md). It combines engineering principles with sharp-mcp tool usage characteristics. Paste it before starting a session — it works with any LLM that supports MCP, not just Claude.
+
+---
+
 
 ## Tech stack
 
