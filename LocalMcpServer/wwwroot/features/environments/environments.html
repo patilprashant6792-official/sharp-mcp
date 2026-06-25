@@ -1,0 +1,67 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>.NET MCP Server — Environments</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/shared/shared.css">
+    <link rel="stylesheet" href="environments.css">
+</head>
+<body>
+    <div class="app-layout">
+        <!-- sidebar injected by layout.js -->
+        <main class="main-content">
+
+            <div class="page-header">
+                <div class="page-title-group">
+                    <h1 class="page-title">Environments</h1>
+                    <p class="page-subtitle">Per-project HTTP environments &mdash; base URL, auth, ready for Claude to call</p>
+                </div>
+            </div>
+
+            <div class="stats-bar">
+                <div class="stat">
+                    <span class="stat-value" id="stat-projects">0</span>
+                    <span class="stat-label">projects configured</span>
+                </div>
+                <div class="stat-divider"></div>
+                <div class="stat">
+                    <span class="stat-value" id="stat-envs">0</span>
+                    <span class="stat-label">total environments</span>
+                </div>
+                <div class="stat-divider"></div>
+                <div class="stat">
+                    <span class="stat-value" id="stat-auth">0</span>
+                    <span class="stat-label">with auth</span>
+                </div>
+            </div>
+
+            <!-- Two-panel workspace -->
+            <div class="env-workspace">
+
+                <!-- Left: project selector -->
+                <div class="project-panel">
+                    <div class="project-panel-title">Projects</div>
+                    <div id="project-list"></div>
+                </div>
+
+                <!-- Right: environment detail -->
+                <div class="env-panel" id="env-panel">
+                    <div class="env-placeholder" id="env-placeholder">
+                        <div class="placeholder-art">&#9881;</div>
+                        <p class="placeholder-title">Select a project</p>
+                        <p class="placeholder-hint">Pick a project on the left to manage its HTTP environments</p>
+                    </div>
+                </div>
+
+            </div>
+        </main>
+    </div>
+
+    <script src="/shared/layout.js"></script>
+    <script src="/shared/ui.js"></script>
+    <script src="environments.js"></script>
+</body>
+</html>

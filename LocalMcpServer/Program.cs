@@ -3,6 +3,7 @@ using MCP.Core.Configuration;
 using MCP.Core.FileUpdateService;
 using MCP.Core.Middlewares;
 using MCP.Core.Services;
+using MCP.Core.HttpProbe;
 using Microsoft.AspNetCore.RateLimiting;
 using ModelContextProtocol.Server;
 using NuGet.Configuration;
@@ -20,7 +21,10 @@ builder.Services.Configure<NuGetServiceConfig>(
     builder.Configuration.GetSection("NuGetService"));
 
 // Add services
-builder.Services.AddControllers();
+builder.Services.AddControllers()
+    .AddJsonOptions(o =>
+        o.JsonSerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter()));
+builder.Services.AddHttpClient();
 builder.Services.AddHealthChecks();
 
 // Add in-memory caching with size limit
@@ -54,6 +58,8 @@ builder.Services.AddSingleton<ICodeSearchService, CachedCodeSearchService>();
 builder.Services.AddSingleton<ICodeSearchFormatterService, CodeSearchFormatterService>();
 // Project configuration service (singleton for file access)
 builder.Services.AddSingleton<IProjectConfigService, RedisProjectConfigService>();
+builder.Services.AddSingleton<IProjectEnvironmentService, RedisProjectEnvironmentService>();
+builder.Services.AddSingleton<IHttpProbeService, HttpProbeService>();
 builder.Services.AddSingleton<IFileModificationService, FileModificationService>(); ;
 builder.Services.AddSingleton<IDotnetCliService, DotnetCliService>();
 builder.Services.AddSingleton<NuGetXmlDocService>();

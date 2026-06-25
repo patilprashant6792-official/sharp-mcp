@@ -8,10 +8,10 @@
 
 // ── Nav registry — extend here to add new pages ──────────────
 const NAV_ITEMS = [
-    { label: 'Projects',    icon: '&#128194;', href: '/features/projects/projects.html',       tooltip: 'Projects' },
-    { label: 'NuGet Cache', icon: '&#128230;', href: '/features/nuget-cache/nuget-cache.html', tooltip: 'NuGet Cache' },
+    { label: 'Projects',     icon: '&#128194;', href: '/features/projects/projects.html',         tooltip: 'Projects' },
+    { label: 'Environments', icon: '&#127760;', href: '/features/environments/environments.html', tooltip: 'Environments' },
+    { label: 'NuGet Cache',  icon: '&#128230;', href: '/features/nuget-cache/nuget-cache.html',   tooltip: 'NuGet Cache' },
 ];
-
 // ── Sidebar collapse state (persisted) ───────────────────────
 const COLLAPSE_KEY = 'mcp_sidebar_collapsed';
 
